@@ -1,0 +1,19 @@
+[Unit]
+Description=Shared Notepad Node.js server
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/shared-notepad
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node /var/www/shared-notepad/server.js
+Restart=on-failure
+RestartSec=5
+ReadWritePaths=/var/www/shared-notepad/storage
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

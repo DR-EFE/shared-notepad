@@ -13,9 +13,17 @@ const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
-const PORT = process.env.PORT || 3000;
+const PORT = Number.parseInt(process.env.PORT || '3000', 10);
 const APP_PASSWORD = process.env.APP_PASSWORD || 'changeme';
 const APP_SECRET = process.env.APP_SECRET || 'changeme';
+
+if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
+  throw new Error('PORT debe ser un número entre 1 y 65535');
+}
+
+if (APP_PASSWORD === 'changeme' || APP_SECRET === 'changeme') {
+  console.warn('[Aviso] Configura APP_PASSWORD y APP_SECRET en .env antes de exponer el servidor.');
+}
 
 // Broadcast helper a todos los clientes WebSocket autenticados
 function broadcast(data, excludeWs = null) {
@@ -42,6 +50,11 @@ if (!fs.existsSync(UPLOADS_DIR)) {
 // Middlewares base
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
+
+// Endpoint para comprobaciones de systemd, Nginx y monitorización.
+app.get('/health', (req, res) => {
+  res.json({ ok: true });
+});
 
 // Función para sanitizar nombres de archivo (evita path traversal y caracteres peligrosos)
 function sanitizeFilename(originalName) {
@@ -282,6 +295,15 @@ wss.on('connection', (ws, req) => {
 });
 
 // Iniciar servidor en 0.0.0.0
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`[Error] El puerto ${PORT} ya está en uso. Detén el proceso anterior o cambia PORT en .env.`);
+  } else {
+    console.error('[Error] No se pudo iniciar el servidor:', err);
+  }
+  process.exit(1);
+});
+
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`[Servidor] Bloc de notas compartido escuchando en http://0.0.0.0:${PORT}`);
 });

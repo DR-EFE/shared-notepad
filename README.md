@@ -1,5 +1,7 @@
 # Bloc de Notas Compartido con Adjuntos
 
+La guía completa de instalación, operación y despliegue está en [DEPLOYMENT.md](DEPLOYMENT.md).
+
 Aplicación web ligera para compartir notas y archivos entre máquinas remotas de forma sencilla y funcional.
 
 ## Características
@@ -72,3 +74,57 @@ El servidor escuchará en `0.0.0.0:$PORT` (por defecto puerto 3000). Accede desd
 http://localhost:3000
 ```
 (O la IP local/pública de la máquina en el puerto configurado).
+
+### Despliegue recomendado en Debian con systemd y Nginx
+
+Los archivos de ejemplo están en `deploy/`. En el servidor:
+
+```bash
+sudo apt update
+sudo apt install -y nodejs npm nginx
+sudo mkdir -p /var/www/shared-notepad
+sudo chown -R www-data:www-data /var/www/shared-notepad
+```
+
+Copia el proyecto a `/var/www/shared-notepad`, crea `.env` con `APP_PASSWORD`, `APP_SECRET` y `PORT=3000`, y ejecuta:
+
+```bash
+cd /var/www/shared-notepad
+npm ci --omit=dev
+sudo install -m 644 deploy/shared-notepad.service.example /etc/systemd/system/shared-notepad.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now shared-notepad
+curl http://127.0.0.1:3000/health
+```
+
+Para Nginx, copia `deploy/nginx.conf.example` a `/etc/nginx/sites-available/shared-notepad`, cambia `server_name`, activa el sitio y valida:
+
+```bash
+sudo ln -s /etc/nginx/sites-available/shared-notepad /etc/nginx/sites-enabled/shared-notepad
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+El proxy incluye soporte para WebSockets y subidas de hasta 50 MB. Si usas otro puerto interno, cambia `PORT` en `.env` y el valor de `proxy_pass` para que coincidan.
+
+### Actualizaciones posteriores
+
+Desde Windows puedes publicar los cambios directamente con:
+
+```powershell
+.\deploy\publish.ps1
+```
+
+El script usa `root@192.168.0.62` por defecto. Para otro servidor o ruta:
+
+```powershell
+.\deploy\publish.ps1 -Server root@OTRA_IP -RemotePath /var/www/otra-app
+```
+
+También puedes ejecutar el mantenimiento desde Debian:
+
+```bash
+cd /var/www/shared-notepad
+bash deploy/update.sh
+```
+
+La publicación instala las dependencias exactas del `package-lock.json`, reinicia el servicio y comprueba `/health`. Cada página adicional podrá tener su propio directorio, servicio y dominio Nginx sin modificar esta aplicación.
