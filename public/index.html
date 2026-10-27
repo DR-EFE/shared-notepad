@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bloc de Notas Compartido</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+
+  <!-- Pantalla de Login -->
+  <div id="login-screen" class="login-container">
+    <div class="login-card">
+      <div class="login-header">
+        <div class="app-icon">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+        </div>
+        <h2>Acceso Remoto</h2>
+        <p>Introduce la contraseña de la aplicación</p>
+      </div>
+      <form id="login-form">
+        <div class="form-group">
+          <input type="password" id="password-input" placeholder="Contraseña..." required autocomplete="current-password" autofocus>
+        </div>
+        <button type="submit" id="login-btn">Entrar</button>
+        <div id="login-error" class="login-error"></div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Pantalla Principal de la Aplicación -->
+  <div id="app-screen" class="app-container hidden">
+    <!-- Navbar Superior -->
+    <header class="app-header">
+      <div class="brand">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
+        <span>Shared Notepad</span>
+      </div>
+
+      <div class="header-nav">
+        <button class="nav-tab active" id="tab-note-btn" onclick="switchTab('note')">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
+          Nota
+        </button>
+        <button class="nav-tab" id="tab-files-btn" onclick="switchTab('files')">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.48-8.48"></path></svg>
+          Archivos <span id="files-badge" class="badge">0</span>
+        </button>
+      </div>
+
+      <div class="header-actions">
+        <span id="save-status" class="status-indicator">Listo</span>
+        <button id="logout-btn" class="btn-secondary" title="Cerrar sesión">Salir</button>
+      </div>
+    </header>
+
+    <!-- Contenido Principal -->
+    <main class="app-main">
+      <!-- Sección: Nota -->
+      <section id="section-note" class="view-section active">
+        <div class="note-toolbar">
+          <div class="note-meta">
+            <span id="char-count">0 caracteres</span>
+            <span class="bullet">•</span>
+            <span id="line-count">0 líneas</span>
+          </div>
+          <div class="note-sync-hint">
+            <span class="sync-dot"></span> Sincronización en tiempo real
+          </div>
+        </div>
+        <div class="textarea-wrapper">
+          <textarea id="note-textarea" placeholder="Escribe aquí tus notas o códigos compartidos... (Se guarda automáticamente al instante)" spellcheck="false"></textarea>
+        </div>
+      </section>
+
+      <!-- Sección: Archivos -->
+      <section id="section-files" class="view-section">
+        <!-- Zona Dropzone -->
+        <div id="dropzone" class="dropzone">
+          <input type="file" id="file-input" multiple class="file-input-hidden">
+          <div class="dropzone-content">
+            <svg class="upload-icon" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+            <p class="dropzone-text">Arrastra y suelta tus archivos aquí, o <label for="file-input" class="browse-link">explorar archivos</label></p>
+            <span class="dropzone-hint">Hasta 50 MB por archivo. Soporta cualquier extensión e imágenes con vista previa.</span>
+          </div>
+          <div id="upload-progress-container" class="upload-progress-container hidden">
+            <div class="progress-bar">
+              <div id="upload-progress-fill" class="progress-fill"></div>
+            </div>
+            <span id="upload-progress-text">Subiendo archivos...</span>
+          </div>
+        </div>
+
+        <!-- Lista de archivos -->
+        <div class="files-container">
+          <div class="files-header">
+            <h3>Archivos almacenados</h3>
+            <button id="refresh-files-btn" class="btn-icon" title="Refrescar lista">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+            </button>
+          </div>
+          <div id="files-list" class="files-grid">
+            <!-- Renderizado dinámico de archivos -->
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div id="toast" class="toast">Mensaje de notificación</div>
+
+  <script src="app.js"></script>
+</body>
+</html>
