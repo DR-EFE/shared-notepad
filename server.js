@@ -39,12 +39,83 @@ function broadcast(data, excludeWs = null) {
 const STORAGE_DIR = path.join(__dirname, 'storage');
 const UPLOADS_DIR = path.join(STORAGE_DIR, 'uploads');
 const NOTE_FILE = path.join(STORAGE_DIR, 'note.txt');
+const NOTES_DATA_FILE = path.join(STORAGE_DIR, 'notes_data.json');
 
 if (!fs.existsSync(STORAGE_DIR)) {
   fs.mkdirSync(STORAGE_DIR, { recursive: true });
 }
 if (!fs.existsSync(UPLOADS_DIR)) {
   fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+}
+
+// Cargar o inicializar estructura de grupos y notas
+function loadNotesData() {
+  if (fs.existsSync(NOTES_DATA_FILE)) {
+    try {
+      const data = JSON.parse(fs.readFileSync(NOTES_DATA_FILE, 'utf8'));
+      if (data && Array.isArray(data.groups) && data.groups.length > 0) {
+        return data;
+      }
+    } catch (e) {
+      console.error('[Aviso] Error al leer notes_data.json, regenerando:', e);
+    }
+  }
+
+  // Si existe note.txt previo, migrar su contenido a la nota inicial
+  let initialContent = '';
+  if (fs.existsSync(NOTE_FILE)) {
+    try {
+      initialContent = fs.readFileSync(NOTE_FILE, 'utf8');
+    } catch (e) {}
+  }
+
+  const initialNoteId = 'note_' + Date.now();
+  const initialGroupId = 'group_' + Date.now();
+  const defaultData = {
+    groups: [
+      {
+        id: initialGroupId,
+        name: 'General',
+        createdAt: Date.now(),
+        notes: [
+          {
+            id: initialNoteId,
+            title: 'Nota Principal',
+            content: initialContent || '',
+            updatedAt: Date.now()
+          }
+        ]
+      }
+    ],
+    activeNoteId: initialNoteId
+  };
+
+  try {
+    fs.writeFileSync(NOTES_DATA_FILE, JSON.stringify(defaultData, null, 2), 'utf8');
+  } catch (err) {
+    console.error('[Error] No se pudo escribir notes_data.json inicial:', err);
+  }
+  return defaultData;
+}
+
+let notesStore = loadNotesData();
+
+let saveDebounceTimer = null;
+function persistNotesDataDebounced() {
+  clearTimeout(saveDebounceTimer);
+  saveDebounceTimer = setTimeout(() => {
+    fs.writeFile(NOTES_DATA_FILE, JSON.stringify(notesStore, null, 2), 'utf8', (err) => {
+      if (err) console.error('[Error] Error al persistir notes_data.json:', err);
+    });
+  }, 250);
+}
+
+function findNoteAndGroup(noteId) {
+  for (const group of notesStore.groups) {
+    const note = group.notes.find(n => n.id === noteId);
+    if (note) return { group, note };
+  }
+  return { group: null, note: null };
 }
 
 // Middlewares base
@@ -132,31 +203,184 @@ app.get('/api/me', (req, res) => {
   res.json({ ok: true });
 });
 
-// GET /api/note - Obtener contenido de la nota
-app.get('/api/note', (req, res) => {
-  fs.readFile(NOTE_FILE, 'utf8', (err, data) => {
-    if (err) {
-      if (err.code === 'ENOENT') {
-        return res.json({ content: '' });
-      }
-      return res.status(500).json({ error: 'Error al leer la nota' });
-    }
-    res.json({ content: data });
-  });
+// GET /api/notes-data - Obtener todos los grupos y notas
+app.get('/api/notes-data', (req, res) => {
+  res.json(notesStore);
 });
 
-// PUT /api/note - Guardar contenido de la nota
-app.put('/api/note', (req, res) => {
-  const { content } = req.body;
-  const text = typeof content === 'string' ? content : '';
-  fs.writeFile(NOTE_FILE, text, 'utf8', (err) => {
-    if (err) {
-      return res.status(500).json({ error: 'Error al guardar la nota' });
+// POST /api/groups - Crear nuevo grupo
+app.post('/api/groups', (req, res) => {
+  const name = (req.body.name || '').trim();
+  if (!name) {
+    return res.status(400).json({ error: 'El nombre del grupo es obligatorio' });
+  }
+  const newGroup = {
+    id: 'group_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
+    name,
+    createdAt: Date.now(),
+    notes: []
+  };
+  notesStore.groups.push(newGroup);
+  persistNotesDataDebounced();
+  broadcast({ type: 'notes_data_update', data: notesStore });
+  res.json(newGroup);
+});
+
+// PUT /api/groups/:id - Renombrar grupo
+app.put('/api/groups/:id', (req, res) => {
+  const name = (req.body.name || '').trim();
+  if (!name) {
+    return res.status(400).json({ error: 'El nombre del grupo es obligatorio' });
+  }
+  const group = notesStore.groups.find(g => g.id === req.params.id);
+  if (!group) {
+    return res.status(404).json({ error: 'Grupo no encontrado' });
+  }
+  group.name = name;
+  persistNotesDataDebounced();
+  broadcast({ type: 'notes_data_update', data: notesStore });
+  res.json(group);
+});
+
+// DELETE /api/groups/:id - Eliminar grupo y sus notas
+app.delete('/api/groups/:id', (req, res) => {
+  const index = notesStore.groups.findIndex(g => g.id === req.params.id);
+  if (index === -1) {
+    return res.status(404).json({ error: 'Grupo no encontrado' });
+  }
+  if (notesStore.groups.length <= 1) {
+    return res.status(400).json({ error: 'No se puede eliminar el único grupo existente' });
+  }
+  notesStore.groups.splice(index, 1);
+
+  // Asegurar que activeNoteId siga siendo válido
+  const { note } = findNoteAndGroup(notesStore.activeNoteId);
+  if (!note) {
+    const firstGroupWithNotes = notesStore.groups.find(g => g.notes.length > 0);
+    if (firstGroupWithNotes) {
+      notesStore.activeNoteId = firstGroupWithNotes.notes[0].id;
+    } else {
+      const fallbackNote = {
+        id: 'note_' + Date.now(),
+        title: 'Nueva Nota',
+        content: '',
+        updatedAt: Date.now()
+      };
+      notesStore.groups[0].notes.push(fallbackNote);
+      notesStore.activeNoteId = fallbackNote.id;
     }
-    // Notificar a otros clientes conectados
-    broadcast({ type: 'note_update', content: text });
-    res.json({ success: true });
-  });
+  }
+
+  persistNotesDataDebounced();
+  broadcast({ type: 'notes_data_update', data: notesStore });
+  res.json({ success: true, activeNoteId: notesStore.activeNoteId });
+});
+
+// POST /api/groups/:groupId/notes - Crear nueva nota en un grupo
+app.post('/api/groups/:groupId/notes', (req, res) => {
+  const group = notesStore.groups.find(g => g.id === req.params.groupId);
+  if (!group) {
+    return res.status(404).json({ error: 'Grupo no encontrado' });
+  }
+  const title = (req.body.title || '').trim() || 'Nota sin título';
+  const content = typeof req.body.content === 'string' ? req.body.content : '';
+  const newNote = {
+    id: 'note_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
+    title,
+    content,
+    updatedAt: Date.now()
+  };
+  group.notes.push(newNote);
+  notesStore.activeNoteId = newNote.id;
+  persistNotesDataDebounced();
+  broadcast({ type: 'notes_data_update', data: notesStore });
+  res.json(newNote);
+});
+
+// PUT /api/notes/:id - Actualizar título o contenido de una nota
+app.put('/api/notes/:id', (req, res) => {
+  const { group, note } = findNoteAndGroup(req.params.id);
+  if (!note) {
+    return res.status(404).json({ error: 'Nota no encontrada' });
+  }
+  let changed = false;
+  if (typeof req.body.title === 'string' && req.body.title.trim()) {
+    note.title = req.body.title.trim();
+    changed = true;
+  }
+  if (typeof req.body.content === 'string') {
+    note.content = req.body.content;
+    changed = true;
+  }
+  if (changed) {
+    note.updatedAt = Date.now();
+    persistNotesDataDebounced();
+    broadcast({
+      type: 'note_update',
+      noteId: note.id,
+      content: note.content,
+      title: note.title
+    });
+  }
+  res.json(note);
+});
+
+// DELETE /api/notes/:id - Eliminar una nota
+app.delete('/api/notes/:id', (req, res) => {
+  const { group, note } = findNoteAndGroup(req.params.id);
+  if (!group || !note) {
+    return res.status(404).json({ error: 'Nota no encontrada' });
+  }
+  group.notes = group.notes.filter(n => n.id !== req.params.id);
+
+  if (notesStore.activeNoteId === req.params.id) {
+    if (group.notes.length > 0) {
+      notesStore.activeNoteId = group.notes[0].id;
+    } else {
+      const otherGroup = notesStore.groups.find(g => g.notes.length > 0);
+      if (otherGroup) {
+        notesStore.activeNoteId = otherGroup.notes[0].id;
+      } else {
+        const fallbackNote = {
+          id: 'note_' + Date.now(),
+          title: 'Nueva Nota',
+          content: '',
+          updatedAt: Date.now()
+        };
+        group.notes.push(fallbackNote);
+        notesStore.activeNoteId = fallbackNote.id;
+      }
+    }
+  }
+
+  persistNotesDataDebounced();
+  broadcast({ type: 'notes_data_update', data: notesStore });
+  res.json({ success: true, activeNoteId: notesStore.activeNoteId });
+});
+
+// GET /api/note - Compatibilidad de la nota actual
+app.get('/api/note', (req, res) => {
+  const { note } = findNoteAndGroup(notesStore.activeNoteId);
+  if (note) {
+    return res.json({ content: note.content, id: note.id, title: note.title });
+  }
+  res.json({ content: '' });
+});
+
+// PUT /api/note - Compatibilidad de guardado
+app.put('/api/note', (req, res) => {
+  const { content, noteId } = req.body;
+  const targetId = noteId || notesStore.activeNoteId;
+  const { note } = findNoteAndGroup(targetId);
+  const text = typeof content === 'string' ? content : '';
+  if (note) {
+    note.content = text;
+    note.updatedAt = Date.now();
+    persistNotesDataDebounced();
+    broadcast({ type: 'note_update', noteId: note.id, content: text, title: note.title });
+    return res.json({ success: true });
+  }
+  res.status(404).json({ error: 'Nota no encontrada' });
 });
 
 // POST /api/upload - Subir archivos (múltiples permitidos)
@@ -216,9 +440,10 @@ app.get('/api/files/:name', (req, res) => {
 
   const contentType = mime.lookup(filePath) || 'application/octet-stream';
   const isImage = contentType.startsWith('image/');
+  const forceDownload = req.query.download === '1' || req.query.download === 'true';
 
   res.setHeader('Content-Type', contentType);
-  if (isImage) {
+  if (isImage && !forceDownload) {
     res.setHeader('Content-Disposition', `inline; filename="${fileName}"`);
   } else {
     res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
@@ -284,11 +509,21 @@ wss.on('connection', (ws, req) => {
 
       // Evento de actualización de nota en tiempo real desde el cliente
       if (data.type === 'note_input') {
+        const targetId = data.noteId || notesStore.activeNoteId;
+        const { note } = findNoteAndGroup(targetId);
         const text = typeof data.content === 'string' ? data.content : '';
-        // Guardar a disco
-        fs.writeFile(NOTE_FILE, text, 'utf8', () => {});
-        // Reenviar a los demás usuarios inmediatamente
-        broadcast({ type: 'note_update', content: text }, ws);
+        if (note) {
+          note.content = text;
+          note.updatedAt = Date.now();
+          persistNotesDataDebounced();
+          // Reenviar a los demás usuarios inmediatamente
+          broadcast({
+            type: 'note_update',
+            noteId: note.id,
+            content: text,
+            title: note.title
+          }, ws);
+        }
       }
     } catch (e) {}
   });

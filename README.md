@@ -6,13 +6,14 @@ Aplicación web ligera para compartir notas y archivos entre máquinas remotas d
 
 ## Características
 
-- **Persistencia sin base de datos**: todo se guarda en archivos locales dentro del directorio `storage/` (`storage/note.txt` y `storage/uploads/`).
-- **Sincronización en tiempo real (WebSockets)**: cada tecla pulsada o archivo subido se refleja de inmediato en todas las pantallas abiertas, sin necesidad de recargar la página.
+- **Organización por Grupos y Páginas de Notas**: sidebar lateral para crear grupos personalizados (por ejemplo, *Trabajo*, *Personal*, *Código*) y cuantas páginas de notas necesites dentro de cada grupo.
+- **Panel de Secciones ("Muro de Notas")**: vista panorámica donde todas las notas aparecen divididas y agrupadas por sección con buscador global y acceso rápido.
+- **Persistencia en archivos JSON/locales**: datos estructurados y persistentes en `storage/notes_data.json` y `storage/uploads/`, con migración transparente de notas previas.
+- **Sincronización en tiempo real (WebSockets)**: cada tecla pulsada, nota creada o archivo subido se refleja de inmediato en todas las pantallas abiertas, sin necesidad de recargar la página.
 - **Autoguardado automático**: sin necesidad de botones de guardar; guarda al vuelo con debounce en disco.
+- **Descarga directa de archivos**: botón para descargar cualquier archivo de forma inmediata al disco local, además de previsualizar imágenes y copiar enlaces directos con token.
 - **Autenticación con contraseña única**: protegida por JWT firmado con duración de 30 días.
-- **Adjuntos de hasta 50 MB**: subida múltiple o mediante arrastrar y soltar (drag & drop), con progreso de subida.
-- **Enlaces con token compartible**: opción de copiar enlace directo (`?token=...`) para visualizar o descargar desde otra máquina sin login previo.
-- **Visualización inline**: las imágenes se muestran en miniatura y se abren directamente en el navegador.
+- **Adjuntos de hasta 50 MB**: subida múltiple o mediante arrastrar y soltar (drag & drop), con barra de progreso.
 
 ---
 

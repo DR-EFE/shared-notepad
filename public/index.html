@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Bloc de Notas Compartido</title>
+  <title>Bloc de Notas Compartido - Grupos y Archivos</title>
   <link rel="stylesheet" href="style.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -36,20 +36,26 @@
     <!-- Navbar Superior -->
     <header class="app-header">
       <div class="brand">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
+        <div class="brand-logo">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
+        </div>
         <span>Shared Notepad</span>
       </div>
 
-      <div class="header-nav">
+      <nav class="header-nav" aria-label="Pestañas principales">
         <button class="nav-tab active" id="tab-note-btn" onclick="switchTab('note')">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
-          Nota
+          Editor de Notas
+        </button>
+        <button class="nav-tab" id="tab-panel-btn" onclick="switchTab('panel')">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+          Panel de Secciones
         </button>
         <button class="nav-tab" id="tab-files-btn" onclick="switchTab('files')">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.48-8.48"></path></svg>
           Archivos <span id="files-badge" class="badge">0</span>
         </button>
-      </div>
+      </nav>
 
       <div class="header-actions">
         <span id="save-status" class="status-indicator">Listo</span>
@@ -59,20 +65,97 @@
 
     <!-- Contenido Principal -->
     <main class="app-main">
-      <!-- Sección: Nota -->
+      <!-- Sección: Editor de Notas con Sidebar -->
       <section id="section-note" class="view-section active">
-        <div class="note-toolbar">
-          <div class="note-meta">
-            <span id="char-count">0 caracteres</span>
-            <span class="bullet">•</span>
-            <span id="line-count">0 líneas</span>
-          </div>
-          <div class="note-sync-hint">
-            <span class="sync-dot"></span> Sincronización en tiempo real
+        <div class="note-workspace">
+          <!-- Sidebar de Grupos y Páginas de Notas -->
+          <aside id="notes-sidebar" class="notes-sidebar">
+            <div class="sidebar-header">
+              <div class="sidebar-title-row">
+                <div class="sidebar-heading">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+                  <span>Grupos de Notas</span>
+                </div>
+                <button id="btn-add-group" class="btn-icon-subtle" title="Crear nuevo grupo de notas">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                </button>
+              </div>
+              <div class="sidebar-search">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                <input type="text" id="sidebar-search-input" placeholder="Buscar páginas o grupos...">
+              </div>
+            </div>
+
+            <div id="groups-list" class="sidebar-groups-list">
+              <!-- Render dinámico de los grupos y sus páginas -->
+            </div>
+          </aside>
+
+          <!-- Área del Editor Activo -->
+          <div class="note-editor-wrapper">
+            <div class="note-editor-topbar">
+              <div class="topbar-left">
+                <button id="btn-toggle-sidebar" class="btn-icon-subtle toggle-sidebar-btn" title="Alternar barra lateral">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="9" y1="3" x2="9" y2="21"></line></svg>
+                </button>
+                <div class="note-breadcrumb">
+                  <span id="active-group-label" class="breadcrumb-group">Grupo</span>
+                  <span class="breadcrumb-separator">/</span>
+                  <input type="text" id="active-note-title" class="active-note-title-input" placeholder="Título de la nota..." maxlength="100">
+                </div>
+              </div>
+
+              <div class="topbar-right">
+                <div class="note-meta-badges">
+                  <span id="char-count">0 caracteres</span>
+                  <span class="bullet">•</span>
+                  <span id="line-count">0 líneas</span>
+                </div>
+                <div class="note-sync-hint" title="Sincronización en vivo con todos los dispositivos">
+                  <span class="sync-dot"></span>
+                  <span class="sync-text">En vivo</span>
+                </div>
+                <div class="editor-actions">
+                  <button id="btn-copy-note" class="btn-icon-subtle" title="Copiar todo el contenido">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                  </button>
+                  <button id="btn-delete-current-note" class="btn-icon-subtle btn-delete-danger" title="Eliminar esta página de nota">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div class="textarea-wrapper">
+              <textarea id="note-textarea" placeholder="Escribe aquí tus notas, códigos, apuntes o enlaces... (Se guarda automáticamente y se sincroniza en tiempo real)" spellcheck="false"></textarea>
+            </div>
           </div>
         </div>
-        <div class="textarea-wrapper">
-          <textarea id="note-textarea" placeholder="Escribe aquí tus notas o códigos compartidos... (Se guarda automáticamente al instante)" spellcheck="false"></textarea>
+      </section>
+
+      <!-- Sección: Panel de Secciones (Vista de todas las notas divididas por grupos) -->
+      <section id="section-panel" class="view-section">
+        <div class="panel-container">
+          <div class="panel-header">
+            <div class="panel-header-text">
+              <h2>Panel de Notas por Secciones</h2>
+              <p>Vista general de todos tus grupos de trabajo y sus páginas de notas asociadas</p>
+            </div>
+            <div class="panel-header-actions">
+              <div class="panel-search-box">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                <input type="text" id="panel-search-input" placeholder="Buscar en todas las notas...">
+              </div>
+              <button id="btn-panel-add-group" class="btn-primary">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                Nuevo Grupo
+              </button>
+            </div>
+          </div>
+
+          <div id="panel-sections-grid" class="panel-sections-grid">
+            <!-- Render dinámico de las secciones y tarjetas de notas -->
+          </div>
         </div>
       </section>
 
@@ -84,7 +167,7 @@
           <div class="dropzone-content">
             <svg class="upload-icon" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
             <p class="dropzone-text">Arrastra y suelta tus archivos aquí, o <label for="file-input" class="browse-link">explorar archivos</label></p>
-            <span class="dropzone-hint">Hasta 50 MB por archivo. Soporta cualquier extensión e imágenes con vista previa.</span>
+            <span class="dropzone-hint">Hasta 50 MB por archivo. Soporta cualquier tipo de archivo con opción de descarga y vista previa de imágenes.</span>
           </div>
           <div id="upload-progress-container" class="upload-progress-container hidden">
             <div class="progress-bar">
@@ -97,17 +180,40 @@
         <!-- Lista de archivos -->
         <div class="files-container">
           <div class="files-header">
-            <h3>Archivos almacenados</h3>
+            <div class="files-header-title">
+              <h3>Archivos almacenados</h3>
+              <span class="files-header-desc">Descarga, abre o copia el enlace de cualquier archivo compartido</span>
+            </div>
             <button id="refresh-files-btn" class="btn-icon" title="Refrescar lista">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
             </button>
           </div>
           <div id="files-list" class="files-grid">
-            <!-- Renderizado dinámico de archivos -->
+            <!-- Renderizado dinámico de archivos con botón de descarga incluido -->
           </div>
         </div>
       </section>
     </main>
+  </div>
+
+  <!-- Modal para Crear/Renombrar Grupo -->
+  <div id="group-modal" class="modal-backdrop hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="modal-group-title">Nuevo Grupo de Notas</h3>
+        <button id="btn-close-group-modal" class="btn-modal-close">&times;</button>
+      </div>
+      <form id="group-form">
+        <div class="form-group">
+          <label for="group-name-input">Nombre del grupo</label>
+          <input type="text" id="group-name-input" placeholder="Ej: Trabajo, Ideas, Código, Personal..." required maxlength="40">
+        </div>
+        <div class="modal-footer">
+          <button type="button" id="btn-cancel-group-modal" class="btn-secondary">Cancelar</button>
+          <button type="submit" id="btn-save-group-modal" class="btn-primary">Guardar</button>
+        </div>
+      </form>
+    </div>
   </div>
 
   <!-- Toast Notification Container -->
