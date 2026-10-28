@@ -62,14 +62,18 @@ body {
   border: 1px solid var(--border-color);
   border-radius: 14px;
   width: 100%;
-  max-width: 400px;
+  max-width: 420px;
   padding: 2.2rem;
   box-shadow: 0 12px 36px rgba(0, 0, 0, 0.6);
 }
 
+.login-card-profiles {
+  max-width: 480px;
+}
+
 .login-header {
   text-align: center;
-  margin-bottom: 2rem;
+  margin-bottom: 1.6rem;
 }
 
 .app-icon {
@@ -81,19 +85,128 @@ body {
   background: rgba(59, 130, 246, 0.15);
   color: var(--accent);
   border-radius: 12px;
-  margin-bottom: 1rem;
+  margin-bottom: 0.9rem;
 }
 
 .login-header h2 {
-  font-size: 1.4rem;
+  font-size: 1.35rem;
   font-weight: 600;
   color: #fff;
-  margin-bottom: 0.4rem;
+  margin-bottom: 0.35rem;
 }
 
 .login-header p {
   font-size: 0.85rem;
   color: var(--text-muted);
+}
+
+/* Selector de Perfiles de Usuario */
+.users-selector-section {
+  margin-bottom: 1.4rem;
+}
+
+.users-selector-heading {
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim);
+  margin-bottom: 0.65rem;
+}
+
+.users-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.75rem;
+}
+
+.user-card {
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  padding: 0.85rem 0.9rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  transition: all 0.2s ease;
+  user-select: none;
+}
+
+.user-card:hover {
+  border-color: var(--border-hover);
+  background: var(--bg-card-subtle);
+  transform: translateY(-2px);
+}
+
+.user-card.selected {
+  border-color: var(--accent);
+  background: rgba(59, 130, 246, 0.08);
+  box-shadow: 0 0 0 2px var(--accent-glow);
+}
+
+.user-avatar {
+  width: 38px;
+  height: 38px;
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 0.95rem;
+  flex-shrink: 0;
+}
+
+.user-avatar.guest {
+  background: rgba(16, 185, 129, 0.15);
+  color: var(--success);
+}
+
+.user-avatar.efe {
+  background: rgba(59, 130, 246, 0.15);
+  color: var(--accent);
+}
+
+.user-avatar.casa {
+  background: rgba(245, 158, 11, 0.15);
+  color: var(--warning);
+}
+
+.user-avatar.chamba {
+  background: rgba(168, 85, 247, 0.15);
+  color: #c084fc;
+}
+
+.user-details {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.user-name {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.user-badge-role {
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.user-card.selected .user-name {
+  color: #fff;
+}
+
+.user-card.selected .user-badge-role {
+  color: var(--accent);
 }
 
 .form-group {
@@ -103,15 +216,32 @@ body {
   gap: 0.4rem;
 }
 
+.form-group.hidden {
+  display: none !important;
+}
+
 .form-group label {
   font-size: 0.82rem;
   font-weight: 500;
   color: var(--text-muted);
 }
 
-.form-group input {
+.input-with-icon {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.input-with-icon svg {
+  position: absolute;
+  left: 0.85rem;
+  color: var(--text-dim);
+  pointer-events: none;
+}
+
+.input-with-icon input {
   width: 100%;
-  padding: 0.85rem 1rem;
+  padding: 0.85rem 1rem 0.85rem 2.4rem;
   background: var(--bg-input);
   border: 1px solid var(--border-color);
   border-radius: 8px;
@@ -121,7 +251,7 @@ body {
   transition: border-color 0.2s, box-shadow 0.2s;
 }
 
-.form-group input:focus {
+.input-with-icon input:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-glow);
 }
@@ -132,7 +262,7 @@ body {
   align-items: center;
   justify-content: center;
   gap: 0.5rem;
-  padding: 0.8rem 1.2rem;
+  padding: 0.85rem 1.2rem;
   background: var(--accent);
   color: #fff;
   border: none;
@@ -140,6 +270,7 @@ body {
   font-size: 0.92rem;
   font-weight: 600;
   cursor: pointer;
+  width: 100%;
   transition: background-color 0.2s, transform 0.1s;
 }
 
@@ -248,6 +379,27 @@ body {
   display: flex;
   align-items: center;
   gap: 1.1rem;
+}
+
+.user-chip {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  background: var(--bg-card-subtle);
+  border: 1px solid var(--border-color);
+  padding: 0.3rem 0.65rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-main);
+  user-select: none;
+}
+
+.user-chip-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background-color: var(--accent);
 }
 
 .status-indicator {

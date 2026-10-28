@@ -57,12 +57,17 @@ Copia el archivo de plantilla `.env.example` a `.env` (si no lo tienes ya):
 cp .env.example .env
 ```
 
-Edita `.env` con tus propios valores seguros:
+Edita `.env` con tus propios valores seguros y las contraseñas para los perfiles:
 ```env
-APP_PASSWORD=tu_password_seguro_aqui
-APP_SECRET=tu_secreto_aleatorio_para_firmar_jwt
 PORT=3000
+APP_SECRET=tu_secreto_aleatorio_para_firmar_jwt
+
+# Contraseñas por perfil de usuario
+PASSWORD_EFE=efe123
+PASSWORD_CASA=casa123
+PASSWORD_CHAMBA=chamba123
 ```
+*Nota: El perfil **Invitado** no requiere contraseña y permite acceso directo.*
 
 > *Tip: Puedes generar un secreto aleatorio seguro ejecutando en Node o terminal:*
 > `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`

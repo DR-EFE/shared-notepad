@@ -19,9 +19,26 @@ let sidebarCollapsed = false;
 const loginScreen = document.getElementById('login-screen');
 const appScreen = document.getElementById('app-screen');
 const loginForm = document.getElementById('login-form');
+const loginBtn = document.getElementById('login-btn');
+const passwordGroup = document.getElementById('password-group');
+const passwordLabel = document.getElementById('password-label');
 const passwordInput = document.getElementById('password-input');
 const loginError = document.getElementById('login-error');
 const logoutBtn = document.getElementById('logout-btn');
+const usersGrid = document.getElementById('users-grid');
+const userChip = document.getElementById('user-chip');
+const userChipName = document.getElementById('user-chip-name');
+
+// Configuración de perfiles de usuario
+const AVAILABLE_USERS = [
+  { id: 'invitado', name: 'Invitado', hasPassword: false, description: 'Sin contraseña', iconClass: 'guest', letter: 'I' },
+  { id: 'efe', name: 'Efe', hasPassword: true, description: 'Con contraseña', iconClass: 'efe', letter: 'E' },
+  { id: 'casa', name: 'Casa', hasPassword: true, description: 'Con contraseña', iconClass: 'casa', letter: 'C' },
+  { id: 'chamba', name: 'Chamba', hasPassword: true, description: 'Con contraseña', iconClass: 'chamba', letter: 'CH' }
+];
+
+let selectedUser = localStorage.getItem('notepad_last_user') || 'invitado';
+let currentUsername = localStorage.getItem('notepad_username') || 'Invitado';
 
 // Pestañas de navegación
 const tabNoteBtn = document.getElementById('tab-note-btn');
@@ -119,10 +136,77 @@ function handleUnauthorized() {
   loginScreen.classList.remove('hidden');
   passwordInput.value = '';
   loginError.textContent = 'Tu sesión ha expirado o no es válida.';
+  renderUserSelector();
+}
+
+// Renderizado del selector de perfiles de usuario
+function renderUserSelector() {
+  if (!usersGrid) return;
+  usersGrid.innerHTML = '';
+
+  AVAILABLE_USERS.forEach(u => {
+    const isSelected = u.id === selectedUser;
+    const card = document.createElement('div');
+    card.className = `user-card ${isSelected ? 'selected' : ''}`;
+    card.dataset.userId = u.id;
+
+    card.innerHTML = `
+      <div class="user-avatar ${u.iconClass}">
+        ${u.letter}
+      </div>
+      <div class="user-details">
+        <span class="user-name">${u.name}</span>
+        <span class="user-badge-role">${u.description}</span>
+      </div>
+    `;
+
+    card.addEventListener('click', () => {
+      selectUserProfile(u.id);
+    });
+
+    usersGrid.appendChild(card);
+  });
+
+  updatePasswordFormVisibility();
+}
+
+function selectUserProfile(userId) {
+  selectedUser = userId;
+  localStorage.setItem('notepad_last_user', userId);
+  loginError.textContent = '';
+
+  // Actualizar clases de selección en las tarjetas
+  const cards = usersGrid.querySelectorAll('.user-card');
+  cards.forEach(c => {
+    c.classList.toggle('selected', c.dataset.userId === userId);
+  });
+
+  updatePasswordFormVisibility();
+}
+
+function updatePasswordFormVisibility() {
+  const user = AVAILABLE_USERS.find(u => u.id === selectedUser) || AVAILABLE_USERS[0];
+
+  if (!user.hasPassword) {
+    passwordGroup.classList.add('hidden');
+    passwordInput.value = '';
+    passwordInput.required = false;
+    loginBtn.textContent = `Entrar como ${user.name}`;
+    loginBtn.focus();
+  } else {
+    passwordGroup.classList.remove('hidden');
+    passwordInput.required = true;
+    passwordLabel.textContent = `Contraseña de ${user.name}`;
+    passwordInput.placeholder = `Introduce la contraseña de ${user.name}...`;
+    loginBtn.textContent = `Entrar como ${user.name}`;
+    passwordInput.focus();
+  }
 }
 
 // Inicialización de la App
 async function initApp() {
+  renderUserSelector();
+
   if (!token) {
     showLogin();
     return;
@@ -132,8 +216,9 @@ async function initApp() {
     const res = await fetch('/api/me', {
       headers: { 'Authorization': `Bearer ${token}` }
     });
+    const data = await res.json();
     if (res.ok) {
-      showApp();
+      showApp(data.username);
     } else {
       handleUnauthorized();
     }
@@ -145,12 +230,21 @@ async function initApp() {
 function showLogin() {
   loginScreen.classList.remove('hidden');
   appScreen.classList.add('hidden');
-  passwordInput.focus();
+  renderUserSelector();
 }
 
-function showApp() {
+function showApp(username) {
   loginScreen.classList.add('hidden');
   appScreen.classList.remove('hidden');
+
+  if (username) {
+    currentUsername = username;
+    localStorage.setItem('notepad_username', username);
+  }
+  if (userChipName) {
+    userChipName.textContent = currentUsername;
+  }
+
   loadNotesData();
   loadFiles();
   connectWebSocket();
@@ -260,13 +354,16 @@ loginForm.addEventListener('submit', async (e) => {
     const res = await fetch('/api/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password })
+      body: JSON.stringify({
+        username: selectedUser,
+        password: password
+      })
     });
     const data = await res.json();
     if (res.ok && data.token) {
       token = data.token;
       localStorage.setItem('notepad_token', token);
-      showApp();
+      showApp(data.username || selectedUser);
     } else {
       loginError.textContent = data.error || 'Contraseña incorrecta';
     }

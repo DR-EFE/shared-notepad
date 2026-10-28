@@ -183,24 +183,60 @@ function authMiddleware(req, res, next) {
   });
 }
 
+// GET /api/users - Perfiles disponibles para el login
+app.get('/api/users', (req, res) => {
+  res.json({
+    users: [
+      { id: 'invitado', name: 'Invitado', hasPassword: false, description: 'Acceso directo sin contraseña' },
+      { id: 'efe', name: 'Efe', hasPassword: true, description: 'Requiere contraseña' },
+      { id: 'casa', name: 'Casa', hasPassword: true, description: 'Requiere contraseña' },
+      { id: 'chamba', name: 'Chamba', hasPassword: true, description: 'Requiere contraseña' }
+    ]
+  });
+});
+
 // POST /api/login
 app.post('/api/login', (req, res) => {
-  const { password } = req.body;
-  if (!password || password !== APP_PASSWORD) {
-    return res.status(401).json({ error: 'Contraseña incorrecta' });
+  const { username, password } = req.body;
+  const userKey = (username || '').toLowerCase().trim();
+
+  // 1. Perfil Invitado: no requiere contraseña
+  if (userKey === 'invitado') {
+    const token = jwt.sign({ auth: true, username: 'Invitado', role: 'guest' }, APP_SECRET, { expiresIn: '30d' });
+    return res.json({ token, username: 'Invitado' });
   }
 
-  // Token con expiración de 30 días
-  const token = jwt.sign({ auth: true }, APP_SECRET, { expiresIn: '30d' });
-  return res.json({ token });
+  // 2. Perfiles con contraseña definida en .env
+  const configUsers = {
+    'efe': { name: 'Efe', pass: process.env.PASSWORD_EFE || 'efe123' },
+    'casa': { name: 'Casa', pass: process.env.PASSWORD_CASA || 'casa123' },
+    'chamba': { name: 'Chamba', pass: process.env.PASSWORD_CHAMBA || 'chamba123' }
+  };
+
+  if (configUsers[userKey]) {
+    const target = configUsers[userKey];
+    if (!password || password !== target.pass) {
+      return res.status(401).json({ error: `Contraseña incorrecta para el usuario ${target.name}` });
+    }
+    const token = jwt.sign({ auth: true, username: target.name, role: 'user' }, APP_SECRET, { expiresIn: '30d' });
+    return res.json({ token, username: target.name });
+  }
+
+  // 3. Fallback de contraseña maestra general si no se envía usuario
+  if (!userKey && password && password === APP_PASSWORD) {
+    const token = jwt.sign({ auth: true, username: 'Usuario', role: 'admin' }, APP_SECRET, { expiresIn: '30d' });
+    return res.json({ token, username: 'Usuario' });
+  }
+
+  return res.status(400).json({ error: 'Por favor selecciona un usuario válido' });
 });
 
 // Proteger todas las rutas /api/* siguientes con el middleware
 app.use('/api', authMiddleware);
 
-// GET /api/me - Validar token actual
+// GET /api/me - Validar token actual y devolver datos del usuario
 app.get('/api/me', (req, res) => {
-  res.json({ ok: true });
+  res.json({ ok: true, username: req.user ? req.user.username : 'Usuario' });
 });
 
 // GET /api/notes-data - Obtener todos los grupos y notas
