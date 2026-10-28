@@ -116,6 +116,31 @@
                   <span class="sync-text">En vivo</span>
                 </div>
                 <div class="editor-actions">
+                  <div class="dropdown-wrapper">
+                    <button id="btn-export-dropdown" class="btn-icon-subtle" title="Exportar nota o respaldo">
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                    </button>
+                    <div id="export-menu" class="dropdown-menu hidden">
+                      <button id="btn-export-ai" class="dropdown-item" title="Markdown con metadatos estructurados para prompts y modelos de IA">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2 2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z"></path><rect x="4" y="8" width="16" height="12" rx="2"></rect><circle cx="9" cy="13" r="1.5"></circle><circle cx="15" cy="13" r="1.5"></circle></svg>
+                        <span>Para IA (.md)</span>
+                      </button>
+                      <button id="btn-export-txt" class="dropdown-item" title="Texto plano tradicional">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
+                        <span>Texto plano (.txt)</span>
+                      </button>
+                      <div class="dropdown-divider"></div>
+                      <button id="btn-export-backup" class="dropdown-item" title="Descargar copia de seguridad con todas las notas y grupos">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>
+                        <span>Respaldo total (.json)</span>
+                      </button>
+                      <button id="btn-import-backup" class="dropdown-item" title="Restaurar notas desde un archivo JSON">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 16 12 12 8 16"></polyline><line x1="12" y1="12" x2="12" y2="21"></line><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"></path></svg>
+                        <span>Restaurar copia (.json)</span>
+                      </button>
+                    </div>
+                  </div>
+                  <input type="file" id="backup-file-input" accept=".json" class="hidden">
                   <button id="btn-copy-note" class="btn-icon-subtle" title="Copiar todo el contenido">
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                   </button>
@@ -127,7 +152,7 @@
             </div>
 
             <div class="textarea-wrapper">
-              <textarea id="note-textarea" placeholder="Escribe aquí tus notas, códigos, apuntes o enlaces... (Se guarda automáticamente y se sincroniza en tiempo real)" spellcheck="false"></textarea>
+              <textarea id="note-textarea" placeholder="Escribe aquí tus notas o códigos... (Soporta Tab para sangría, pegar capturas con Ctrl+V y guardado instantáneo)" spellcheck="false"></textarea>
             </div>
           </div>
         </div>
