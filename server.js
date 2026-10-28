@@ -13,6 +13,10 @@ const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
+wss.on('error', (err) => {
+  console.error('[WebSocket] Error del servidor:', err.message);
+});
+
 const PORT = Number.parseInt(process.env.PORT || '3000', 10);
 const APP_PASSWORD = process.env.APP_PASSWORD || 'changeme';
 const APP_SECRET = process.env.APP_SECRET || 'changeme';
