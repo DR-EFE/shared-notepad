@@ -12,6 +12,12 @@ Aplicación web ligera para compartir notas y archivos entre máquinas remotas d
 - **Sincronización en tiempo real (WebSockets)**: cada tecla pulsada, nota creada o archivo subido se refleja de inmediato en todas las pantallas abiertas, sin necesidad de recargar la página.
 - **Autoguardado automático**: sin necesidad de botones de guardar; guarda al vuelo con debounce en disco.
 - **Descarga directa de archivos**: botón para descargar cualquier archivo de forma inmediata al disco local, además de previsualizar imágenes y copiar enlaces directos con token.
+- **Soporte de tecla `Tab` para código y listas**: sangría limpia de 2 espacios con `Tab` y desindentación con `Shift + Tab`, tanto para líneas individuales como selecciones multilínea.
+- **Pegado directo de capturas (`Ctrl + V`)**: pega imágenes directamente desde el portapapeles; se suben automáticamente a la carpeta de archivos y se inserta el enlace Markdown en la nota activa.
+- **Exportación optimizada para IA y Respaldos**:
+  - 🤖 **Formato para IA (`.md`)**: genera un archivo Markdown enriquecido con Frontmatter YAML estructurado (título, grupo, fecha, metadatos) listo para procesar en ChatGPT, Claude, Gemini, etc.
+  - 📄 **Texto plano (`.txt`)**: descarga directa del contenido sin formato.
+  - 📦 **Copia de seguridad total (`.json`)**: exporta y restaura todas las notas y grupos en un solo clic.
 - **Autenticación con contraseña única**: protegida por JWT firmado con duración de 30 días.
 - **Adjuntos de hasta 50 MB**: subida múltiple o mediante arrastrar y soltar (drag & drop), con barra de progreso.
 

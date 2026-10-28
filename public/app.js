@@ -47,6 +47,15 @@ const saveStatus = document.getElementById('save-status');
 const btnCopyNote = document.getElementById('btn-copy-note');
 const btnDeleteCurrentNote = document.getElementById('btn-delete-current-note');
 
+// Elementos de Exportación y Respaldo
+const btnExportDropdown = document.getElementById('btn-export-dropdown');
+const exportMenu = document.getElementById('export-menu');
+const btnExportAi = document.getElementById('btn-export-ai');
+const btnExportTxt = document.getElementById('btn-export-txt');
+const btnExportBackup = document.getElementById('btn-export-backup');
+const btnImportBackup = document.getElementById('btn-import-backup');
+const backupFileInput = document.getElementById('backup-file-input');
+
 // Elementos del Panel de Secciones
 const panelSearchInput = document.getElementById('panel-search-input');
 const btnPanelAddGroup = document.getElementById('btn-panel-add-group');
@@ -435,6 +444,64 @@ noteTextarea.addEventListener('input', () => {
   }, 350);
 });
 
+// Soporte de tecla Tab para sangría / indentación de código y listas
+noteTextarea.addEventListener('keydown', (e) => {
+  if (e.key === 'Tab') {
+    e.preventDefault();
+    const start = noteTextarea.selectionStart;
+    const end = noteTextarea.selectionEnd;
+    const val = noteTextarea.value;
+    const tabSpaces = '  '; // 2 espacios (estándar moderno para notas y código)
+
+    if (start === end) {
+      // Sin selección de texto: insertar 2 espacios en el cursor
+      if (!e.shiftKey) {
+        noteTextarea.value = val.substring(0, start) + tabSpaces + val.substring(end);
+        noteTextarea.selectionStart = noteTextarea.selectionEnd = start + tabSpaces.length;
+      }
+    } else {
+      // Con selección multilínea: indentar o desindentar todas las líneas seleccionadas
+      const lineStart = val.lastIndexOf('\n', start - 1) + 1;
+      let lineEnd = val.indexOf('\n', end);
+      if (lineEnd === -1) lineEnd = val.length;
+
+      const lines = val.substring(lineStart, lineEnd).split('\n');
+      let modifiedLines;
+      let delta = 0;
+
+      if (e.shiftKey) {
+        // Shift + Tab: Desindentar
+        modifiedLines = lines.map(line => {
+          if (line.startsWith(tabSpaces)) {
+            delta -= tabSpaces.length;
+            return line.substring(tabSpaces.length);
+          } else if (line.startsWith('\t')) {
+            delta -= 1;
+            return line.substring(1);
+          } else if (line.startsWith(' ')) {
+            delta -= 1;
+            return line.substring(1);
+          }
+          return line;
+        });
+      } else {
+        // Tab: Indentar
+        modifiedLines = lines.map(line => {
+          delta += tabSpaces.length;
+          return tabSpaces + line;
+        });
+      }
+
+      noteTextarea.value = val.substring(0, lineStart) + modifiedLines.join('\n') + val.substring(lineEnd);
+      noteTextarea.selectionStart = start;
+      noteTextarea.selectionEnd = Math.max(start, end + delta);
+    }
+
+    // Disparar input para auto-guardado y sincronización en tiempo real
+    noteTextarea.dispatchEvent(new Event('input'));
+  }
+});
+
 // Guardado del título de la nota con debounce
 activeNoteTitleInput.addEventListener('input', () => {
   const activeNote = getActiveNote();
@@ -461,6 +528,130 @@ activeNoteTitleInput.addEventListener('input', () => {
 btnToggleSidebar.addEventListener('click', () => {
   sidebarCollapsed = !sidebarCollapsed;
   notesSidebar.classList.toggle('collapsed', sidebarCollapsed);
+});
+
+// Utilidad para descargar archivo en el navegador
+function downloadTextFile(filename, content, mimeType = 'text/plain;charset=utf-8') {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// Menú de Exportación y Respaldo
+btnExportDropdown.addEventListener('click', (e) => {
+  e.stopPropagation();
+  exportMenu.classList.toggle('hidden');
+});
+
+document.addEventListener('click', () => {
+  if (exportMenu && !exportMenu.classList.contains('hidden')) {
+    exportMenu.classList.add('hidden');
+  }
+});
+
+// Exportar para IA (.md con formato contextual óptimo)
+btnExportAi.addEventListener('click', () => {
+  const active = getActiveNote();
+  if (!active) {
+    showToast('No hay ninguna nota seleccionada');
+    return;
+  }
+  const { group } = findNoteAndGroupByNoteId(active.id);
+  const groupName = group ? group.name : 'General';
+  const cleanTitle = (active.title || 'Nota').replace(/[^a-zA-Z0-9_\-\.\s]/g, '').trim() || 'nota';
+  const safeFilename = cleanTitle.replace(/\s+/g, '_') + '_ia.md';
+
+  // Formato Markdown optimizado para LLMs con Frontmatter semántico
+  const isoDate = new Date(active.updatedAt || Date.now()).toISOString();
+  const mdContent = `---
+title: "${active.title || 'Nota sin título'}"
+group: "${groupName}"
+last_updated: "${isoDate}"
+characters: ${active.content ? active.content.length : 0}
+format: "markdown"
+source: "Shared Notepad"
+---
+
+# ${active.title || 'Nota sin título'}
+
+${active.content || ''}
+`;
+
+  downloadTextFile(safeFilename, mdContent, 'text/markdown;charset=utf-8');
+  showToast('Nota exportada en formato optimizado para IA (.md)');
+});
+
+// Exportar en texto plano (.txt)
+btnExportTxt.addEventListener('click', () => {
+  const active = getActiveNote();
+  if (!active) {
+    showToast('No hay ninguna nota seleccionada');
+    return;
+  }
+  const cleanTitle = (active.title || 'Nota').replace(/[^a-zA-Z0-9_\-\.\s]/g, '').trim() || 'nota';
+  const safeFilename = cleanTitle.replace(/\s+/g, '_') + '.txt';
+  downloadTextFile(safeFilename, active.content || '', 'text/plain;charset=utf-8');
+  showToast('Nota exportada como archivo de texto (.txt)');
+});
+
+// Exportar Respaldo Total de todas las notas y grupos (.json)
+btnExportBackup.addEventListener('click', () => {
+  if (!notesStore.groups || notesStore.groups.length === 0) {
+    showToast('No hay notas para respaldar');
+    return;
+  }
+  const now = new Date();
+  const timestamp = now.toISOString().replace(/[-:T]/g, '').slice(0, 14);
+  const jsonContent = JSON.stringify(notesStore, null, 2);
+  downloadTextFile(`respaldo_notas_${timestamp}.json`, jsonContent, 'application/json;charset=utf-8');
+  showToast('Copia de seguridad completa descargada');
+});
+
+// Restaurar Respaldo (.json)
+btnImportBackup.addEventListener('click', () => {
+  backupFileInput.click();
+});
+
+backupFileInput.addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = async (event) => {
+    try {
+      const parsedData = JSON.parse(event.target.result);
+      if (!parsedData || !Array.isArray(parsedData.groups) || parsedData.groups.length === 0) {
+        showToast('El archivo no contiene un formato de respaldo válido');
+        return;
+      }
+
+      const totalNotes = parsedData.groups.reduce((acc, g) => acc + (g.notes ? g.notes.length : 0), 0);
+      if (confirm(`¿Restaurar respaldo con ${parsedData.groups.length} grupo(s) y ${totalNotes} nota(s)? Esto actualizará las notas actuales.`)) {
+        const res = await apiFetch('/api/restore-backup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ data: parsedData })
+        });
+        if (res.ok) {
+          notesStore = parsedData;
+          showToast('Copia de seguridad restaurada con éxito');
+          loadNotesData();
+        } else {
+          showToast('Error al restaurar respaldo en el servidor');
+        }
+      }
+    } catch (err) {
+      showToast('Error al leer el archivo JSON de respaldo');
+    }
+  };
+  reader.readAsText(file);
+  backupFileInput.value = '';
 });
 
 // Copiar contenido de la nota
@@ -1007,8 +1198,8 @@ function renderFileList(files) {
   });
 }
 
-// Subida de Archivos
-async function uploadFiles(files) {
+// Subida de Archivos (soporta callback onDone opcional)
+async function uploadFiles(files, onDone = null) {
   if (!files || files.length === 0) return;
 
   const formData = new FormData();
@@ -1037,6 +1228,13 @@ async function uploadFiles(files) {
     if (xhr.status === 200) {
       showToast('Archivos subidos con éxito');
       loadFiles();
+      let respData = null;
+      try {
+        respData = JSON.parse(xhr.responseText);
+      } catch (e) {}
+      if (onDone && respData && respData.uploaded) {
+        onDone(respData.uploaded);
+      }
     } else if (xhr.status === 401) {
       handleUnauthorized();
     } else {
@@ -1056,6 +1254,72 @@ async function uploadFiles(files) {
 
   xhr.send(formData);
 }
+
+// Utilidad para insertar texto en la posición del cursor de un textarea
+function insertTextAtCursor(textarea, text) {
+  const start = textarea.selectionStart;
+  const end = textarea.selectionEnd;
+  const val = textarea.value;
+  textarea.value = val.substring(0, start) + text + val.substring(end);
+  textarea.selectionStart = textarea.selectionEnd = start + text.length;
+  textarea.dispatchEvent(new Event('input'));
+  textarea.focus();
+}
+
+// Pegado directo de capturas de pantalla / imágenes (Ctrl + V)
+document.addEventListener('paste', async (e) => {
+  // Ignorar si el usuario no ha iniciado sesión
+  if (!appScreen || appScreen.classList.contains('hidden')) return;
+
+  const clipboardData = e.clipboardData || window.clipboardData;
+  if (!clipboardData || !clipboardData.items) return;
+
+  const items = clipboardData.items;
+  const imageFiles = [];
+
+  for (let i = 0; i < items.length; i++) {
+    if (items[i].type.indexOf('image') !== -1) {
+      const blob = items[i].getAsFile();
+      if (blob) {
+        const now = new Date();
+        const y = now.getFullYear();
+        const m = String(now.getMonth() + 1).padStart(2, '0');
+        const d = String(now.getDate()).padStart(2, '0');
+        const h = String(now.getHours()).padStart(2, '0');
+        const min = String(now.getMinutes()).padStart(2, '0');
+        const s = String(now.getSeconds()).padStart(2, '0');
+        const ext = blob.type.split('/')[1] || 'png';
+        const fileName = `captura_${y}${m}${d}_${h}${min}${s}.${ext}`;
+        const file = new File([blob], fileName, { type: blob.type });
+        imageFiles.push(file);
+      }
+    }
+  }
+
+  if (imageFiles.length > 0) {
+    // Si el usuario tenía foco en el editor de texto, prevenir que se peguen caracteres binarios o cadenas raw
+    if (document.activeElement === noteTextarea) {
+      e.preventDefault();
+    }
+    showToast('Subiendo captura de pantalla...');
+
+    uploadFiles(imageFiles, (uploaded) => {
+      if (uploaded && uploaded.length > 0) {
+        const first = uploaded[0];
+        const fileUrl = `${window.location.origin}/api/files/${encodeURIComponent(first.name)}?token=${encodeURIComponent(token)}`;
+
+        // Si estamos en la pestaña del editor, insertar enlace o referencia markdown
+        if (currentTab === 'note') {
+          const mdImg = `\n![${first.name}](${fileUrl})\n`;
+          insertTextAtCursor(noteTextarea, mdImg);
+          showToast(`Captura guardada e insertada en la nota`);
+        } else {
+          showToast(`Captura "${first.name}" guardada en Archivos`);
+        }
+      }
+    });
+  }
+});
 
 // Eventos Dropzone
 ['dragenter', 'dragover'].forEach(eventName => {

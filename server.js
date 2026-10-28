@@ -212,6 +212,18 @@ app.get('/api/notes-data', (req, res) => {
   res.json(notesStore);
 });
 
+// POST /api/restore-backup - Restaurar notas completas desde un archivo de respaldo
+app.post('/api/restore-backup', (req, res) => {
+  const { data } = req.body;
+  if (!data || !Array.isArray(data.groups) || data.groups.length === 0) {
+    return res.status(400).json({ error: 'Formato de respaldo no válido o vacío' });
+  }
+  notesStore = data;
+  persistNotesDataDebounced();
+  broadcast({ type: 'notes_data_update', data: notesStore });
+  res.json({ success: true, activeNoteId: notesStore.activeNoteId });
+});
+
 // POST /api/groups - Crear nuevo grupo
 app.post('/api/groups', (req, res) => {
   const name = (req.body.name || '').trim();
