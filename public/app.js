@@ -128,10 +128,26 @@ async function apiFetch(endpoint, options = {}) {
 function handleUnauthorized() {
   token = null;
   localStorage.removeItem('notepad_token');
+  localStorage.removeItem('notepad_userId');
   if (socket) {
-    socket.close();
+    try { socket.close(); } catch (e) { }
     socket = null;
   }
+  clearTimeout(reconnectTimer);
+  clearTimeout(autoSaveTimer);
+  clearTimeout(titleSaveTimer);
+
+  // Limpiar memoria y vista para que ningún dato quede visible
+  notesStore = { groups: [], activeNoteId: null };
+  if (noteTextarea) noteTextarea.value = '';
+  if (activeNoteTitleInput) activeNoteTitleInput.value = '';
+  if (groupsListEl) groupsListEl.innerHTML = '';
+  if (panelSectionsGrid) panelSectionsGrid.innerHTML = '';
+  if (filesList) filesList.innerHTML = '';
+  if (filesBadge) filesBadge.textContent = '0';
+  if (charCount) charCount.textContent = '0 caracteres';
+  if (lineCount) lineCount.textContent = '0 líneas';
+
   appScreen.classList.add('hidden');
   loginScreen.classList.remove('hidden');
   passwordInput.value = '';
@@ -218,7 +234,7 @@ async function initApp() {
     });
     const data = await res.json();
     if (res.ok) {
-      showApp(data.username);
+      showApp(data.username, data.userId);
     } else {
       handleUnauthorized();
     }
@@ -233,440 +249,456 @@ function showLogin() {
   renderUserSelector();
 }
 
-function showApp(username) {
-  loginScreen.classList.add('hidden');
-  appScreen.classList.remove('hidden');
+  function showApp(username, userId) {
+    loginScreen.classList.add('hidden');
+    appScreen.classList.remove('hidden');
 
-  if (username) {
-    currentUsername = username;
-    localStorage.setItem('notepad_username', username);
-  }
-  if (userChipName) {
-    userChipName.textContent = currentUsername;
-  }
+    if (username) {
+      currentUsername = username;
+      localStorage.setItem('notepad_username', username);
+    }
+    if (userId) {
+      localStorage.setItem('notepad_userId', userId);
+    }
+    if (userChipName) {
+      userChipName.textContent = currentUsername;
+    }
 
-  loadNotesData();
-  loadFiles();
-  connectWebSocket();
-}
-
-// Conexión WebSocket para sincronización en tiempo real
-function connectWebSocket() {
-  if (!token) return;
-  if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
-    return;
-  }
-
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const wsUrl = `${protocol}//${window.location.host}/?token=${encodeURIComponent(token)}`;
-
-  try {
-    socket = new WebSocket(wsUrl);
-
-    socket.onopen = () => {
-      setSaveStatus('En línea', 'saved');
-      socket.send(JSON.stringify({ type: 'auth', token }));
-    };
-
-    socket.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.type === 'note_update') {
-          handleRemoteNoteUpdate(data);
-        } else if (data.type === 'notes_data_update') {
-          notesStore = data.data;
-          renderSidebar(sidebarSearchInput.value);
-          renderSectionsPanel(panelSearchInput.value);
-          // Si la nota activa fue actualizada o eliminada, refrescar vista del editor
-          const active = getActiveNote();
-          if (active) {
-            updateEditorHeader(active);
-          } else {
-            selectFirstAvailableNote();
-          }
-        } else if (data.type === 'files_update') {
-          loadFiles();
-        }
-      } catch (err) {}
-    };
-
-    socket.onclose = () => {
+    // Si había una conexión previa (ej. cambio de usuario), cerrarla
+    if (socket) {
+      try { socket.close(); } catch (e) { }
       socket = null;
-      clearTimeout(reconnectTimer);
-      reconnectTimer = setTimeout(() => {
-        if (token) connectWebSocket();
-      }, 3000);
-    };
-
-    socket.onerror = () => {
-      if (socket) socket.close();
-    };
-  } catch (err) {
-    console.error('Error al conectar WebSocket:', err);
-  }
-}
-
-function handleRemoteNoteUpdate(data) {
-  // Actualizar la nota en el store local
-  for (const group of notesStore.groups) {
-    const n = group.notes.find(item => item.id === data.noteId);
-    if (n) {
-      if (typeof data.content === 'string') n.content = data.content;
-      if (typeof data.title === 'string') n.title = data.title;
-      n.updatedAt = Date.now();
-      break;
     }
-  }
 
-  // Si es la nota actualmente abierta en el editor
-  if (notesStore.activeNoteId === data.noteId) {
-    if (typeof data.title === 'string' && activeNoteTitleInput.value !== data.title) {
-      activeNoteTitleInput.value = data.title;
-    }
-    if (typeof data.content === 'string' && noteTextarea.value !== data.content) {
-      isReceivingRemoteUpdate = true;
-      const start = noteTextarea.selectionStart;
-      const end = noteTextarea.selectionEnd;
-      noteTextarea.value = data.content;
-      updateNoteStats();
-      try {
-        noteTextarea.setSelectionRange(start, end);
-      } catch (e) {}
-      isReceivingRemoteUpdate = false;
-      setSaveStatus('Sincronizado', 'saved');
-    }
-  }
+    // Reiniciar estado local para cargar los datos del usuario actual
+    notesStore = { groups: [], activeNoteId: null };
+    if (groupsListEl) groupsListEl.innerHTML = '';
+    if (panelSectionsGrid) panelSectionsGrid.innerHTML = '';
+    if (filesList) filesList.innerHTML = '';
 
-  // Refrescar vistas visuales
-  renderSidebar(sidebarSearchInput.value);
-  if (currentTab === 'panel') {
-    renderSectionsPanel(panelSearchInput.value);
-  }
-}
-
-// Login
-loginForm.addEventListener('submit', async (e) => {
-  e.preventDefault();
-  loginError.textContent = '';
-  const password = passwordInput.value;
-
-  try {
-    const res = await fetch('/api/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        username: selectedUser,
-        password: password
-      })
-    });
-    const data = await res.json();
-    if (res.ok && data.token) {
-      token = data.token;
-      localStorage.setItem('notepad_token', token);
-      showApp(data.username || selectedUser);
-    } else {
-      loginError.textContent = data.error || 'Contraseña incorrecta';
-    }
-  } catch (err) {
-    loginError.textContent = 'Error de conexión con el servidor';
-  }
-});
-
-// Logout
-logoutBtn.addEventListener('click', () => {
-  handleUnauthorized();
-  loginError.textContent = '';
-});
-
-// Gestión de Pestañas
-function switchTab(tab) {
-  currentTab = tab;
-
-  // Botones
-  tabNoteBtn.classList.toggle('active', tab === 'note');
-  tabPanelBtn.classList.toggle('active', tab === 'panel');
-  tabFilesBtn.classList.toggle('active', tab === 'files');
-
-  // Secciones
-  sectionNote.classList.toggle('active', tab === 'note');
-  sectionPanel.classList.toggle('active', tab === 'panel');
-  sectionFiles.classList.toggle('active', tab === 'files');
-
-  if (tab === 'note') {
-    noteTextarea.focus();
-  } else if (tab === 'panel') {
-    renderSectionsPanel(panelSearchInput.value);
-  } else if (tab === 'files') {
+    loadNotesData();
     loadFiles();
-  }
-}
-
-// ============================================================
-// GESTIÓN DE NOTAS, GRUPOS Y SIDEBAR
-// ============================================================
-
-function findNoteAndGroupByNoteId(noteId) {
-  for (const group of notesStore.groups) {
-    const note = group.notes.find(n => n.id === noteId);
-    if (note) return { group, note };
-  }
-  return { group: null, note: null };
-}
-
-function getActiveNote() {
-  const { note } = findNoteAndGroupByNoteId(notesStore.activeNoteId);
-  return note;
-}
-
-async function loadNotesData() {
-  try {
-    setSaveStatus('Cargando...', '');
-    const res = await apiFetch('/api/notes-data');
-    const data = await res.json();
-    notesStore = data;
-
-    // Expandir automáticamente los grupos que tengan notas o al menos el primero
-    notesStore.groups.forEach((g, index) => {
-      if (index === 0 || g.notes.some(n => n.id === notesStore.activeNoteId)) {
-        expandedGroups.add(g.id);
-      }
-    });
-
-    selectNote(notesStore.activeNoteId || (notesStore.groups[0]?.notes[0]?.id));
-    renderSidebar();
-    setSaveStatus('Listo', 'saved');
-  } catch (err) {
-    console.error('Error cargando notas:', err);
-    setSaveStatus('Error', 'error');
-  }
-}
-
-function selectNote(noteId) {
-  if (!noteId) {
-    selectFirstAvailableNote();
-    return;
+    connectWebSocket();
   }
 
-  const { group, note } = findNoteAndGroupByNoteId(noteId);
-  if (!note) {
-    selectFirstAvailableNote();
-    return;
-  }
-
-  notesStore.activeNoteId = note.id;
-  if (group) {
-    expandedGroups.add(group.id);
-  }
-
-  // Asignar en editor
-  isReceivingRemoteUpdate = true;
-  activeNoteTitleInput.value = note.title || 'Nota sin título';
-  noteTextarea.value = note.content || '';
-  isReceivingRemoteUpdate = false;
-
-  updateEditorHeader({ note, group });
-  updateNoteStats();
-  renderSidebar(sidebarSearchInput.value);
-}
-
-function selectFirstAvailableNote() {
-  for (const group of notesStore.groups) {
-    if (group.notes.length > 0) {
-      selectNote(group.notes[0].id);
+  // Conexión WebSocket para sincronización en tiempo real
+  function connectWebSocket() {
+    if (!token) return;
+    if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
       return;
     }
-  }
-  // Si no hay notas en ningún grupo, limpiar editor
-  notesStore.activeNoteId = null;
-  activeGroupLabel.textContent = 'Sin grupo';
-  activeNoteTitleInput.value = '';
-  noteTextarea.value = '';
-  updateNoteStats();
-  renderSidebar();
-}
 
-function updateEditorHeader({ note, group }) {
-  if (!group && note) {
-    const found = findNoteAndGroupByNoteId(note.id);
-    group = found.group;
-  }
-  activeGroupLabel.textContent = group ? group.name : 'General';
-}
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}/?token=${encodeURIComponent(token)}`;
 
-function updateNoteStats() {
-  const val = noteTextarea.value;
-  charCount.textContent = `${val.length} caracteres`;
-  const lines = val.length === 0 ? 0 : val.split('\n').length;
-  lineCount.textContent = `${lines} líneas`;
-}
-
-function setSaveStatus(text, statusClass) {
-  saveStatus.textContent = text;
-  saveStatus.className = 'status-indicator ' + (statusClass || '');
-}
-
-// Guardado del texto en la nota activa con debounce
-noteTextarea.addEventListener('input', () => {
-  if (isReceivingRemoteUpdate) return;
-  const activeNote = getActiveNote();
-  if (!activeNote) return;
-
-  activeNote.content = noteTextarea.value;
-  activeNote.updatedAt = Date.now();
-  updateNoteStats();
-  setSaveStatus('Sincronizando...', 'saving');
-
-  // Enviar cambio al instante por WebSocket
-  if (socket && socket.readyState === WebSocket.OPEN) {
-    socket.send(JSON.stringify({
-      type: 'note_input',
-      noteId: activeNote.id,
-      content: noteTextarea.value
-    }));
-  }
-
-  // Guardar en servidor con debounce
-  clearTimeout(autoSaveTimer);
-  autoSaveTimer = setTimeout(async () => {
     try {
-      await apiFetch(`/api/notes/${activeNote.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: noteTextarea.value })
-      });
-      setSaveStatus('Guardado', 'saved');
+      socket = new WebSocket(wsUrl);
+
+      socket.onopen = () => {
+        setSaveStatus('En línea', 'saved');
+        socket.send(JSON.stringify({ type: 'auth', token }));
+      };
+
+      socket.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === 'note_update') {
+            handleRemoteNoteUpdate(data);
+          } else if (data.type === 'notes_data_update') {
+            notesStore = data.data;
+            renderSidebar(sidebarSearchInput.value);
+            renderSectionsPanel(panelSearchInput.value);
+            // Si la nota activa fue actualizada o eliminada, refrescar vista del editor
+            const active = getActiveNote();
+            if (active) {
+              updateEditorHeader(active);
+            } else {
+              selectFirstAvailableNote();
+            }
+          } else if (data.type === 'files_update') {
+            loadFiles();
+          }
+        } catch (err) { }
+      };
+
+      socket.onclose = () => {
+        socket = null;
+        clearTimeout(reconnectTimer);
+        reconnectTimer = setTimeout(() => {
+          if (token) connectWebSocket();
+        }, 3000);
+      };
+
+      socket.onerror = () => {
+        if (socket) socket.close();
+      };
     } catch (err) {
+      console.error('Error al conectar WebSocket:', err);
+    }
+  }
+
+  function handleRemoteNoteUpdate(data) {
+    // Actualizar la nota en el store local
+    for (const group of notesStore.groups) {
+      const n = group.notes.find(item => item.id === data.noteId);
+      if (n) {
+        if (typeof data.content === 'string') n.content = data.content;
+        if (typeof data.title === 'string') n.title = data.title;
+        n.updatedAt = Date.now();
+        break;
+      }
+    }
+
+    // Si es la nota actualmente abierta en el editor
+    if (notesStore.activeNoteId === data.noteId) {
+      if (typeof data.title === 'string' && activeNoteTitleInput.value !== data.title) {
+        activeNoteTitleInput.value = data.title;
+      }
+      if (typeof data.content === 'string' && noteTextarea.value !== data.content) {
+        isReceivingRemoteUpdate = true;
+        const start = noteTextarea.selectionStart;
+        const end = noteTextarea.selectionEnd;
+        noteTextarea.value = data.content;
+        updateNoteStats();
+        try {
+          noteTextarea.setSelectionRange(start, end);
+        } catch (e) { }
+        isReceivingRemoteUpdate = false;
+        setSaveStatus('Sincronizado', 'saved');
+      }
+    }
+
+    // Refrescar vistas visuales
+    renderSidebar(sidebarSearchInput.value);
+    if (currentTab === 'panel') {
+      renderSectionsPanel(panelSearchInput.value);
+    }
+  }
+
+  // Login
+  loginForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    loginError.textContent = '';
+    const password = passwordInput.value;
+
+    try {
+      const res = await fetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: selectedUser,
+          password: password
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.token) {
+        token = data.token;
+        localStorage.setItem('notepad_token', token);
+        passwordInput.value = '';
+        showApp(data.username || selectedUser, data.userId || selectedUser);
+      } else {
+        loginError.textContent = data.error || 'Contraseña incorrecta';
+      }
+    } catch (err) {
+      loginError.textContent = 'Error de conexión con el servidor';
+    }
+  });
+
+  // Logout
+  logoutBtn.addEventListener('click', () => {
+    handleUnauthorized();
+    loginError.textContent = '';
+  });
+
+  // Gestión de Pestañas
+  function switchTab(tab) {
+    currentTab = tab;
+
+    // Botones
+    tabNoteBtn.classList.toggle('active', tab === 'note');
+    tabPanelBtn.classList.toggle('active', tab === 'panel');
+    tabFilesBtn.classList.toggle('active', tab === 'files');
+
+    // Secciones
+    sectionNote.classList.toggle('active', tab === 'note');
+    sectionPanel.classList.toggle('active', tab === 'panel');
+    sectionFiles.classList.toggle('active', tab === 'files');
+
+    if (tab === 'note') {
+      noteTextarea.focus();
+    } else if (tab === 'panel') {
+      renderSectionsPanel(panelSearchInput.value);
+    } else if (tab === 'files') {
+      loadFiles();
+    }
+  }
+
+  // ============================================================
+  // GESTIÓN DE NOTAS, GRUPOS Y SIDEBAR
+  // ============================================================
+
+  function findNoteAndGroupByNoteId(noteId) {
+    for (const group of notesStore.groups) {
+      const note = group.notes.find(n => n.id === noteId);
+      if (note) return { group, note };
+    }
+    return { group: null, note: null };
+  }
+
+  function getActiveNote() {
+    const { note } = findNoteAndGroupByNoteId(notesStore.activeNoteId);
+    return note;
+  }
+
+  async function loadNotesData() {
+    try {
+      setSaveStatus('Cargando...', '');
+      const res = await apiFetch('/api/notes-data');
+      const data = await res.json();
+      notesStore = data;
+
+      // Expandir automáticamente los grupos que tengan notas o al menos el primero
+      notesStore.groups.forEach((g, index) => {
+        if (index === 0 || g.notes.some(n => n.id === notesStore.activeNoteId)) {
+          expandedGroups.add(g.id);
+        }
+      });
+
+      selectNote(notesStore.activeNoteId || (notesStore.groups[0]?.notes[0]?.id));
+      renderSidebar();
+      setSaveStatus('Listo', 'saved');
+    } catch (err) {
+      console.error('Error cargando notas:', err);
       setSaveStatus('Error', 'error');
     }
-  }, 350);
-});
+  }
 
-// Soporte de tecla Tab para sangría / indentación de código y listas
-noteTextarea.addEventListener('keydown', (e) => {
-  if (e.key === 'Tab') {
-    e.preventDefault();
-    const start = noteTextarea.selectionStart;
-    const end = noteTextarea.selectionEnd;
-    const val = noteTextarea.value;
-    const tabSpaces = '  '; // 2 espacios (estándar moderno para notas y código)
-
-    if (start === end) {
-      // Sin selección de texto: insertar 2 espacios en el cursor
-      if (!e.shiftKey) {
-        noteTextarea.value = val.substring(0, start) + tabSpaces + val.substring(end);
-        noteTextarea.selectionStart = noteTextarea.selectionEnd = start + tabSpaces.length;
-      }
-    } else {
-      // Con selección multilínea: indentar o desindentar todas las líneas seleccionadas
-      const lineStart = val.lastIndexOf('\n', start - 1) + 1;
-      let lineEnd = val.indexOf('\n', end);
-      if (lineEnd === -1) lineEnd = val.length;
-
-      const lines = val.substring(lineStart, lineEnd).split('\n');
-      let modifiedLines;
-      let delta = 0;
-
-      if (e.shiftKey) {
-        // Shift + Tab: Desindentar
-        modifiedLines = lines.map(line => {
-          if (line.startsWith(tabSpaces)) {
-            delta -= tabSpaces.length;
-            return line.substring(tabSpaces.length);
-          } else if (line.startsWith('\t')) {
-            delta -= 1;
-            return line.substring(1);
-          } else if (line.startsWith(' ')) {
-            delta -= 1;
-            return line.substring(1);
-          }
-          return line;
-        });
-      } else {
-        // Tab: Indentar
-        modifiedLines = lines.map(line => {
-          delta += tabSpaces.length;
-          return tabSpaces + line;
-        });
-      }
-
-      noteTextarea.value = val.substring(0, lineStart) + modifiedLines.join('\n') + val.substring(lineEnd);
-      noteTextarea.selectionStart = start;
-      noteTextarea.selectionEnd = Math.max(start, end + delta);
+  function selectNote(noteId) {
+    if (!noteId) {
+      selectFirstAvailableNote();
+      return;
     }
 
-    // Disparar input para auto-guardado y sincronización en tiempo real
-    noteTextarea.dispatchEvent(new Event('input'));
+    const { group, note } = findNoteAndGroupByNoteId(noteId);
+    if (!note) {
+      selectFirstAvailableNote();
+      return;
+    }
+
+    notesStore.activeNoteId = note.id;
+    if (group) {
+      expandedGroups.add(group.id);
+    }
+
+    // Asignar en editor
+    isReceivingRemoteUpdate = true;
+    activeNoteTitleInput.value = note.title || 'Nota sin título';
+    noteTextarea.value = note.content || '';
+    isReceivingRemoteUpdate = false;
+
+    updateEditorHeader({ note, group });
+    updateNoteStats();
+    renderSidebar(sidebarSearchInput.value);
   }
-});
 
-// Guardado del título de la nota con debounce
-activeNoteTitleInput.addEventListener('input', () => {
-  const activeNote = getActiveNote();
-  if (!activeNote) return;
-
-  const newTitle = activeNoteTitleInput.value.trim() || 'Nota sin título';
-  activeNote.title = newTitle;
-  renderSidebar(sidebarSearchInput.value);
-
-  clearTimeout(titleSaveTimer);
-  titleSaveTimer = setTimeout(async () => {
-    try {
-      await apiFetch(`/api/notes/${activeNote.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: newTitle })
-      });
-      showToast('Título actualizado');
-    } catch (e) {}
-  }, 400);
-});
-
-// Toggle Sidebar
-btnToggleSidebar.addEventListener('click', () => {
-  sidebarCollapsed = !sidebarCollapsed;
-  notesSidebar.classList.toggle('collapsed', sidebarCollapsed);
-});
-
-// Utilidad para descargar archivo en el navegador
-function downloadTextFile(filename, content, mimeType = 'text/plain;charset=utf-8') {
-  const blob = new Blob([content], { type: mimeType });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
-// Menú de Exportación y Respaldo
-btnExportDropdown.addEventListener('click', (e) => {
-  e.stopPropagation();
-  exportMenu.classList.toggle('hidden');
-});
-
-document.addEventListener('click', () => {
-  if (exportMenu && !exportMenu.classList.contains('hidden')) {
-    exportMenu.classList.add('hidden');
+  function selectFirstAvailableNote() {
+    for (const group of notesStore.groups) {
+      if (group.notes.length > 0) {
+        selectNote(group.notes[0].id);
+        return;
+      }
+    }
+    // Si no hay notas en ningún grupo, limpiar editor
+    notesStore.activeNoteId = null;
+    activeGroupLabel.textContent = 'Sin grupo';
+    activeNoteTitleInput.value = '';
+    noteTextarea.value = '';
+    updateNoteStats();
+    renderSidebar();
   }
-});
 
-// Exportar para IA (.md con formato contextual óptimo)
-btnExportAi.addEventListener('click', () => {
-  const active = getActiveNote();
-  if (!active) {
-    showToast('No hay ninguna nota seleccionada');
-    return;
+  function updateEditorHeader({ note, group }) {
+    if (!group && note) {
+      const found = findNoteAndGroupByNoteId(note.id);
+      group = found.group;
+    }
+    activeGroupLabel.textContent = group ? group.name : 'General';
   }
-  const { group } = findNoteAndGroupByNoteId(active.id);
-  const groupName = group ? group.name : 'General';
-  const cleanTitle = (active.title || 'Nota').replace(/[^a-zA-Z0-9_\-\.\s]/g, '').trim() || 'nota';
-  const safeFilename = cleanTitle.replace(/\s+/g, '_') + '_ia.md';
 
-  // Formato Markdown optimizado para LLMs con Frontmatter semántico
-  const isoDate = new Date(active.updatedAt || Date.now()).toISOString();
-  const mdContent = `---
+  function updateNoteStats() {
+    const val = noteTextarea.value;
+    charCount.textContent = `${val.length} caracteres`;
+    const lines = val.length === 0 ? 0 : val.split('\n').length;
+    lineCount.textContent = `${lines} líneas`;
+  }
+
+  function setSaveStatus(text, statusClass) {
+    saveStatus.textContent = text;
+    saveStatus.className = 'status-indicator ' + (statusClass || '');
+  }
+
+  // Guardado del texto en la nota activa con debounce
+  noteTextarea.addEventListener('input', () => {
+    if (isReceivingRemoteUpdate) return;
+    const activeNote = getActiveNote();
+    if (!activeNote) return;
+
+    activeNote.content = noteTextarea.value;
+    activeNote.updatedAt = Date.now();
+    updateNoteStats();
+    setSaveStatus('Sincronizando...', 'saving');
+
+    // Enviar cambio al instante por WebSocket
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({
+        type: 'note_input',
+        noteId: activeNote.id,
+        content: noteTextarea.value
+      }));
+    }
+
+    // Guardar en servidor con debounce
+    clearTimeout(autoSaveTimer);
+    autoSaveTimer = setTimeout(async () => {
+      try {
+        await apiFetch(`/api/notes/${activeNote.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: noteTextarea.value })
+        });
+        setSaveStatus('Guardado', 'saved');
+      } catch (err) {
+        setSaveStatus('Error', 'error');
+      }
+    }, 350);
+  });
+
+  // Soporte de tecla Tab para sangría / indentación de código y listas
+  noteTextarea.addEventListener('keydown', (e) => {
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      const start = noteTextarea.selectionStart;
+      const end = noteTextarea.selectionEnd;
+      const val = noteTextarea.value;
+      const tabSpaces = '  '; // 2 espacios (estándar moderno para notas y código)
+
+      if (start === end) {
+        // Sin selección de texto: insertar 2 espacios en el cursor
+        if (!e.shiftKey) {
+          noteTextarea.value = val.substring(0, start) + tabSpaces + val.substring(end);
+          noteTextarea.selectionStart = noteTextarea.selectionEnd = start + tabSpaces.length;
+        }
+      } else {
+        // Con selección multilínea: indentar o desindentar todas las líneas seleccionadas
+        const lineStart = val.lastIndexOf('\n', start - 1) + 1;
+        let lineEnd = val.indexOf('\n', end);
+        if (lineEnd === -1) lineEnd = val.length;
+
+        const lines = val.substring(lineStart, lineEnd).split('\n');
+        let modifiedLines;
+        let delta = 0;
+
+        if (e.shiftKey) {
+          // Shift + Tab: Desindentar
+          modifiedLines = lines.map(line => {
+            if (line.startsWith(tabSpaces)) {
+              delta -= tabSpaces.length;
+              return line.substring(tabSpaces.length);
+            } else if (line.startsWith('\t')) {
+              delta -= 1;
+              return line.substring(1);
+            } else if (line.startsWith(' ')) {
+              delta -= 1;
+              return line.substring(1);
+            }
+            return line;
+          });
+        } else {
+          // Tab: Indentar
+          modifiedLines = lines.map(line => {
+            delta += tabSpaces.length;
+            return tabSpaces + line;
+          });
+        }
+
+        noteTextarea.value = val.substring(0, lineStart) + modifiedLines.join('\n') + val.substring(lineEnd);
+        noteTextarea.selectionStart = start;
+        noteTextarea.selectionEnd = Math.max(start, end + delta);
+      }
+
+      // Disparar input para auto-guardado y sincronización en tiempo real
+      noteTextarea.dispatchEvent(new Event('input'));
+    }
+  });
+
+  // Guardado del título de la nota con debounce
+  activeNoteTitleInput.addEventListener('input', () => {
+    const activeNote = getActiveNote();
+    if (!activeNote) return;
+
+    const newTitle = activeNoteTitleInput.value.trim() || 'Nota sin título';
+    activeNote.title = newTitle;
+    renderSidebar(sidebarSearchInput.value);
+
+    clearTimeout(titleSaveTimer);
+    titleSaveTimer = setTimeout(async () => {
+      try {
+        await apiFetch(`/api/notes/${activeNote.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title: newTitle })
+        });
+        showToast('Título actualizado');
+      } catch (e) { }
+    }, 400);
+  });
+
+  // Toggle Sidebar
+  btnToggleSidebar.addEventListener('click', () => {
+    sidebarCollapsed = !sidebarCollapsed;
+    notesSidebar.classList.toggle('collapsed', sidebarCollapsed);
+  });
+
+  // Utilidad para descargar archivo en el navegador
+  function downloadTextFile(filename, content, mimeType = 'text/plain;charset=utf-8') {
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  // Menú de Exportación y Respaldo
+  btnExportDropdown.addEventListener('click', (e) => {
+    e.stopPropagation();
+    exportMenu.classList.toggle('hidden');
+  });
+
+  document.addEventListener('click', () => {
+    if (exportMenu && !exportMenu.classList.contains('hidden')) {
+      exportMenu.classList.add('hidden');
+    }
+  });
+
+  // Exportar para IA (.md con formato contextual óptimo)
+  btnExportAi.addEventListener('click', () => {
+    const active = getActiveNote();
+    if (!active) {
+      showToast('No hay ninguna nota seleccionada');
+      return;
+    }
+    const { group } = findNoteAndGroupByNoteId(active.id);
+    const groupName = group ? group.name : 'General';
+    const cleanTitle = (active.title || 'Nota').replace(/[^a-zA-Z0-9_\-\.\s]/g, '').trim() || 'nota';
+    const safeFilename = cleanTitle.replace(/\s+/g, '_') + '_ia.md';
+
+    // Formato Markdown optimizado para LLMs con Frontmatter semántico
+    const isoDate = new Date(active.updatedAt || Date.now()).toISOString();
+    const mdContent = `---
 title: "${active.title || 'Nota sin título'}"
 group: "${groupName}"
 last_updated: "${isoDate}"
@@ -680,156 +712,156 @@ source: "Shared Notepad"
 ${active.content || ''}
 `;
 
-  downloadTextFile(safeFilename, mdContent, 'text/markdown;charset=utf-8');
-  showToast('Nota exportada en formato optimizado para IA (.md)');
-});
-
-// Exportar en texto plano (.txt)
-btnExportTxt.addEventListener('click', () => {
-  const active = getActiveNote();
-  if (!active) {
-    showToast('No hay ninguna nota seleccionada');
-    return;
-  }
-  const cleanTitle = (active.title || 'Nota').replace(/[^a-zA-Z0-9_\-\.\s]/g, '').trim() || 'nota';
-  const safeFilename = cleanTitle.replace(/\s+/g, '_') + '.txt';
-  downloadTextFile(safeFilename, active.content || '', 'text/plain;charset=utf-8');
-  showToast('Nota exportada como archivo de texto (.txt)');
-});
-
-// Exportar Respaldo Total de todas las notas y grupos (.json)
-btnExportBackup.addEventListener('click', () => {
-  if (!notesStore.groups || notesStore.groups.length === 0) {
-    showToast('No hay notas para respaldar');
-    return;
-  }
-  const now = new Date();
-  const timestamp = now.toISOString().replace(/[-:T]/g, '').slice(0, 14);
-  const jsonContent = JSON.stringify(notesStore, null, 2);
-  downloadTextFile(`respaldo_notas_${timestamp}.json`, jsonContent, 'application/json;charset=utf-8');
-  showToast('Copia de seguridad completa descargada');
-});
-
-// Restaurar Respaldo (.json)
-btnImportBackup.addEventListener('click', () => {
-  backupFileInput.click();
-});
-
-backupFileInput.addEventListener('change', (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
-
-  const reader = new FileReader();
-  reader.onload = async (event) => {
-    try {
-      const parsedData = JSON.parse(event.target.result);
-      if (!parsedData || !Array.isArray(parsedData.groups) || parsedData.groups.length === 0) {
-        showToast('El archivo no contiene un formato de respaldo válido');
-        return;
-      }
-
-      const totalNotes = parsedData.groups.reduce((acc, g) => acc + (g.notes ? g.notes.length : 0), 0);
-      if (confirm(`¿Restaurar respaldo con ${parsedData.groups.length} grupo(s) y ${totalNotes} nota(s)? Esto actualizará las notas actuales.`)) {
-        const res = await apiFetch('/api/restore-backup', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ data: parsedData })
-        });
-        if (res.ok) {
-          notesStore = parsedData;
-          showToast('Copia de seguridad restaurada con éxito');
-          loadNotesData();
-        } else {
-          showToast('Error al restaurar respaldo en el servidor');
-        }
-      }
-    } catch (err) {
-      showToast('Error al leer el archivo JSON de respaldo');
-    }
-  };
-  reader.readAsText(file);
-  backupFileInput.value = '';
-});
-
-// Copiar contenido de la nota
-btnCopyNote.addEventListener('click', () => {
-  if (!noteTextarea.value) {
-    showToast('La nota está vacía');
-    return;
-  }
-  navigator.clipboard.writeText(noteTextarea.value).then(() => {
-    showToast('Contenido copiado al portapapeles');
-  }).catch(() => {
-    showToast('No se pudo copiar');
+    downloadTextFile(safeFilename, mdContent, 'text/markdown;charset=utf-8');
+    showToast('Nota exportada en formato optimizado para IA (.md)');
   });
-});
 
-// Eliminar nota actual desde la barra del editor
-btnDeleteCurrentNote.addEventListener('click', () => {
-  const active = getActiveNote();
-  if (!active) return;
-  deleteNoteConfirm(active.id, active.title);
-});
+  // Exportar en texto plano (.txt)
+  btnExportTxt.addEventListener('click', () => {
+    const active = getActiveNote();
+    if (!active) {
+      showToast('No hay ninguna nota seleccionada');
+      return;
+    }
+    const cleanTitle = (active.title || 'Nota').replace(/[^a-zA-Z0-9_\-\.\s]/g, '').trim() || 'nota';
+    const safeFilename = cleanTitle.replace(/\s+/g, '_') + '.txt';
+    downloadTextFile(safeFilename, active.content || '', 'text/plain;charset=utf-8');
+    showToast('Nota exportada como archivo de texto (.txt)');
+  });
 
-// Función para eliminar nota con confirmación
-async function deleteNoteConfirm(noteId, title) {
-  if (confirm(`¿Eliminar la página "${title || 'esta nota'}"?`)) {
-    try {
-      const res = await apiFetch(`/api/notes/${noteId}`, { method: 'DELETE' });
-      const data = await res.json();
-      showToast('Página eliminada');
-      if (data.activeNoteId) {
-        selectNote(data.activeNoteId);
-      } else {
-        selectFirstAvailableNote();
+  // Exportar Respaldo Total de todas las notas y grupos (.json)
+  btnExportBackup.addEventListener('click', () => {
+    if (!notesStore.groups || notesStore.groups.length === 0) {
+      showToast('No hay notas para respaldar');
+      return;
+    }
+    const now = new Date();
+    const timestamp = now.toISOString().replace(/[-:T]/g, '').slice(0, 14);
+    const jsonContent = JSON.stringify(notesStore, null, 2);
+    downloadTextFile(`respaldo_notas_${timestamp}.json`, jsonContent, 'application/json;charset=utf-8');
+    showToast('Copia de seguridad completa descargada');
+  });
+
+  // Restaurar Respaldo (.json)
+  btnImportBackup.addEventListener('click', () => {
+    backupFileInput.click();
+  });
+
+  backupFileInput.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      try {
+        const parsedData = JSON.parse(event.target.result);
+        if (!parsedData || !Array.isArray(parsedData.groups) || parsedData.groups.length === 0) {
+          showToast('El archivo no contiene un formato de respaldo válido');
+          return;
+        }
+
+        const totalNotes = parsedData.groups.reduce((acc, g) => acc + (g.notes ? g.notes.length : 0), 0);
+        if (confirm(`¿Restaurar respaldo con ${parsedData.groups.length} grupo(s) y ${totalNotes} nota(s)? Esto actualizará las notas actuales.`)) {
+          const res = await apiFetch('/api/restore-backup', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ data: parsedData })
+          });
+          if (res.ok) {
+            notesStore = parsedData;
+            showToast('Copia de seguridad restaurada con éxito');
+            loadNotesData();
+          } else {
+            showToast('Error al restaurar respaldo en el servidor');
+          }
+        }
+      } catch (err) {
+        showToast('Error al leer el archivo JSON de respaldo');
       }
-    } catch (err) {
-      showToast('Error al eliminar nota');
+    };
+    reader.readAsText(file);
+    backupFileInput.value = '';
+  });
+
+  // Copiar contenido de la nota
+  btnCopyNote.addEventListener('click', () => {
+    if (!noteTextarea.value) {
+      showToast('La nota está vacía');
+      return;
+    }
+    navigator.clipboard.writeText(noteTextarea.value).then(() => {
+      showToast('Contenido copiado al portapapeles');
+    }).catch(() => {
+      showToast('No se pudo copiar');
+    });
+  });
+
+  // Eliminar nota actual desde la barra del editor
+  btnDeleteCurrentNote.addEventListener('click', () => {
+    const active = getActiveNote();
+    if (!active) return;
+    deleteNoteConfirm(active.id, active.title);
+  });
+
+  // Función para eliminar nota con confirmación
+  async function deleteNoteConfirm(noteId, title) {
+    if (confirm(`¿Eliminar la página "${title || 'esta nota'}"?`)) {
+      try {
+        const res = await apiFetch(`/api/notes/${noteId}`, { method: 'DELETE' });
+        const data = await res.json();
+        showToast('Página eliminada');
+        if (data.activeNoteId) {
+          selectNote(data.activeNoteId);
+        } else {
+          selectFirstAvailableNote();
+        }
+      } catch (err) {
+        showToast('Error al eliminar nota');
+      }
     }
   }
-}
 
-// Búsqueda en Sidebar
-sidebarSearchInput.addEventListener('input', (e) => {
-  renderSidebar(e.target.value.trim().toLowerCase());
-});
+  // Búsqueda en Sidebar
+  sidebarSearchInput.addEventListener('input', (e) => {
+    renderSidebar(e.target.value.trim().toLowerCase());
+  });
 
-// Renderizado del Sidebar
-function renderSidebar(filterQuery = '') {
-  groupsListEl.innerHTML = '';
+  // Renderizado del Sidebar
+  function renderSidebar(filterQuery = '') {
+    groupsListEl.innerHTML = '';
 
-  if (!notesStore.groups || notesStore.groups.length === 0) {
-    groupsListEl.innerHTML = `
+    if (!notesStore.groups || notesStore.groups.length === 0) {
+      groupsListEl.innerHTML = `
       <div style="padding: 1.5rem; text-align: center; color: var(--text-dim); font-size: 0.85rem;">
         No hay grupos de notas. Haz clic en el botón '+' para crear uno.
       </div>`;
-    return;
-  }
-
-  notesStore.groups.forEach(group => {
-    const isExpanded = expandedGroups.has(group.id) || !!filterQuery;
-    
-    // Filtrado si hay búsqueda
-    let visibleNotes = group.notes;
-    if (filterQuery) {
-      const groupMatches = group.name.toLowerCase().includes(filterQuery);
-      if (!groupMatches) {
-        visibleNotes = group.notes.filter(n => 
-          n.title.toLowerCase().includes(filterQuery) || 
-          (n.content && n.content.toLowerCase().includes(filterQuery))
-        );
-        if (visibleNotes.length === 0) return; // ocultar grupo entero si nada coincide
-      }
+      return;
     }
 
-    const groupEl = document.createElement('div');
-    groupEl.className = `group-item ${isExpanded ? 'open' : ''}`;
-    groupEl.dataset.groupId = group.id;
+    notesStore.groups.forEach(group => {
+      const isExpanded = expandedGroups.has(group.id) || !!filterQuery;
 
-    // Cabecera del grupo
-    const groupHeader = document.createElement('div');
-    groupHeader.className = 'group-header';
-    groupHeader.innerHTML = `
+      // Filtrado si hay búsqueda
+      let visibleNotes = group.notes;
+      if (filterQuery) {
+        const groupMatches = group.name.toLowerCase().includes(filterQuery);
+        if (!groupMatches) {
+          visibleNotes = group.notes.filter(n =>
+            n.title.toLowerCase().includes(filterQuery) ||
+            (n.content && n.content.toLowerCase().includes(filterQuery))
+          );
+          if (visibleNotes.length === 0) return; // ocultar grupo entero si nada coincide
+        }
+      }
+
+      const groupEl = document.createElement('div');
+      groupEl.className = `group-item ${isExpanded ? 'open' : ''}`;
+      groupEl.dataset.groupId = group.id;
+
+      // Cabecera del grupo
+      const groupHeader = document.createElement('div');
+      groupHeader.className = 'group-header';
+      groupHeader.innerHTML = `
       <div class="group-header-left">
         <span class="group-chevron">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>
@@ -851,48 +883,48 @@ function renderSidebar(filterQuery = '') {
       </div>
     `;
 
-    // Click para alternar acordeón
-    groupHeader.addEventListener('click', () => {
-      if (expandedGroups.has(group.id)) {
-        expandedGroups.delete(group.id);
+      // Click para alternar acordeón
+      groupHeader.addEventListener('click', () => {
+        if (expandedGroups.has(group.id)) {
+          expandedGroups.delete(group.id);
+        } else {
+          expandedGroups.add(group.id);
+        }
+        groupEl.classList.toggle('open', expandedGroups.has(group.id));
+      });
+
+      // Botón añadir nota al grupo
+      groupHeader.querySelector('.btn-add-note-inline').addEventListener('click', () => {
+        createNewNoteInGroup(group.id);
+      });
+
+      // Botón renombrar grupo
+      groupHeader.querySelector('.btn-rename-group').addEventListener('click', () => {
+        openGroupModal('rename', group.id, group.name);
+      });
+
+      // Botón eliminar grupo
+      groupHeader.querySelector('.btn-delete-group').addEventListener('click', () => {
+        deleteGroupConfirm(group.id, group.name);
+      });
+
+      groupEl.appendChild(groupHeader);
+
+      // Sublista de notas
+      const notesSublist = document.createElement('div');
+      notesSublist.className = 'notes-sublist';
+
+      if (visibleNotes.length === 0) {
+        const emptyNoteEl = document.createElement('div');
+        emptyNoteEl.style.cssText = 'padding: 0.3rem 0.5rem; font-size: 0.78rem; color: var(--text-dim); font-style: italic;';
+        emptyNoteEl.textContent = 'Sin páginas de notas';
+        notesSublist.appendChild(emptyNoteEl);
       } else {
-        expandedGroups.add(group.id);
-      }
-      groupEl.classList.toggle('open', expandedGroups.has(group.id));
-    });
-
-    // Botón añadir nota al grupo
-    groupHeader.querySelector('.btn-add-note-inline').addEventListener('click', () => {
-      createNewNoteInGroup(group.id);
-    });
-
-    // Botón renombrar grupo
-    groupHeader.querySelector('.btn-rename-group').addEventListener('click', () => {
-      openGroupModal('rename', group.id, group.name);
-    });
-
-    // Botón eliminar grupo
-    groupHeader.querySelector('.btn-delete-group').addEventListener('click', () => {
-      deleteGroupConfirm(group.id, group.name);
-    });
-
-    groupEl.appendChild(groupHeader);
-
-    // Sublista de notas
-    const notesSublist = document.createElement('div');
-    notesSublist.className = 'notes-sublist';
-
-    if (visibleNotes.length === 0) {
-      const emptyNoteEl = document.createElement('div');
-      emptyNoteEl.style.cssText = 'padding: 0.3rem 0.5rem; font-size: 0.78rem; color: var(--text-dim); font-style: italic;';
-      emptyNoteEl.textContent = 'Sin páginas de notas';
-      notesSublist.appendChild(emptyNoteEl);
-    } else {
-      visibleNotes.forEach(note => {
-        const isNoteActive = note.id === notesStore.activeNoteId;
-        const noteEl = document.createElement('div');
-        noteEl.className = `note-item ${isNoteActive ? 'active' : ''}`;
-        noteEl.innerHTML = `
+        visibleNotes.forEach(note => {
+          const isNoteActive = note.id === notesStore.activeNoteId;
+          const noteEl = document.createElement('div');
+          noteEl.className = `note-item ${isNoteActive ? 'active' : ''}`;
+          noteEl.innerHTML = `
           <div class="note-item-left">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
             <span class="note-item-title" title="${note.title}">${note.title}</span>
@@ -904,115 +936,115 @@ function renderSidebar(filterQuery = '') {
           </div>
         `;
 
-        noteEl.addEventListener('click', () => {
-          selectNote(note.id);
+          noteEl.addEventListener('click', () => {
+            selectNote(note.id);
+          });
+
+          noteEl.querySelector('.btn-delete-note-item').addEventListener('click', () => {
+            deleteNoteConfirm(note.id, note.title);
+          });
+
+          notesSublist.appendChild(noteEl);
         });
-
-        noteEl.querySelector('.btn-delete-note-item').addEventListener('click', () => {
-          deleteNoteConfirm(note.id, note.title);
-        });
-
-        notesSublist.appendChild(noteEl);
-      });
-    }
-
-    groupEl.appendChild(notesSublist);
-    groupsListEl.appendChild(groupEl);
-  });
-}
-
-// Crear nueva nota en un grupo
-async function createNewNoteInGroup(groupId) {
-  try {
-    const res = await apiFetch(`/api/groups/${groupId}/notes`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        title: 'Nueva Página',
-        content: ''
-      })
-    });
-    const newNote = await res.json();
-    expandedGroups.add(groupId);
-    selectNote(newNote.id);
-    activeNoteTitleInput.focus();
-    activeNoteTitleInput.select();
-    showToast('Nueva página de nota creada');
-  } catch (err) {
-    showToast('Error al crear nota');
-  }
-}
-
-// Eliminar grupo con confirmación
-async function deleteGroupConfirm(groupId, groupName) {
-  if (notesStore.groups.length <= 1) {
-    showToast('Debes mantener al menos un grupo de notas');
-    return;
-  }
-  if (confirm(`¿Eliminar el grupo "${groupName}" y todas sus páginas de notas?`)) {
-    try {
-      const res = await apiFetch(`/api/groups/${groupId}`, { method: 'DELETE' });
-      const data = await res.json();
-      showToast('Grupo eliminado');
-      if (data.activeNoteId) {
-        selectNote(data.activeNoteId);
-      } else {
-        selectFirstAvailableNote();
       }
+
+      groupEl.appendChild(notesSublist);
+      groupsListEl.appendChild(groupEl);
+    });
+  }
+
+  // Crear nueva nota en un grupo
+  async function createNewNoteInGroup(groupId) {
+    try {
+      const res = await apiFetch(`/api/groups/${groupId}/notes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: 'Nueva Página',
+          content: ''
+        })
+      });
+      const newNote = await res.json();
+      expandedGroups.add(groupId);
+      selectNote(newNote.id);
+      activeNoteTitleInput.focus();
+      activeNoteTitleInput.select();
+      showToast('Nueva página de nota creada');
     } catch (err) {
-      showToast('Error al eliminar grupo');
+      showToast('Error al crear nota');
     }
   }
-}
 
-// ============================================================
-// PANEL DE SECCIONES (VISTA DE TODAS LAS NOTAS POR GRUPOS)
-// ============================================================
+  // Eliminar grupo con confirmación
+  async function deleteGroupConfirm(groupId, groupName) {
+    if (notesStore.groups.length <= 1) {
+      showToast('Debes mantener al menos un grupo de notas');
+      return;
+    }
+    if (confirm(`¿Eliminar el grupo "${groupName}" y todas sus páginas de notas?`)) {
+      try {
+        const res = await apiFetch(`/api/groups/${groupId}`, { method: 'DELETE' });
+        const data = await res.json();
+        showToast('Grupo eliminado');
+        if (data.activeNoteId) {
+          selectNote(data.activeNoteId);
+        } else {
+          selectFirstAvailableNote();
+        }
+      } catch (err) {
+        showToast('Error al eliminar grupo');
+      }
+    }
+  }
 
-panelSearchInput.addEventListener('input', (e) => {
-  renderSectionsPanel(e.target.value.trim().toLowerCase());
-});
+  // ============================================================
+  // PANEL DE SECCIONES (VISTA DE TODAS LAS NOTAS POR GRUPOS)
+  // ============================================================
 
-btnPanelAddGroup.addEventListener('click', () => {
-  openGroupModal('create');
-});
+  panelSearchInput.addEventListener('input', (e) => {
+    renderSectionsPanel(e.target.value.trim().toLowerCase());
+  });
 
-btnAddGroup.addEventListener('click', () => {
-  openGroupModal('create');
-});
+  btnPanelAddGroup.addEventListener('click', () => {
+    openGroupModal('create');
+  });
 
-function renderSectionsPanel(filterQuery = '') {
-  panelSectionsGrid.innerHTML = '';
+  btnAddGroup.addEventListener('click', () => {
+    openGroupModal('create');
+  });
 
-  if (!notesStore.groups || notesStore.groups.length === 0) {
-    panelSectionsGrid.innerHTML = `
+  function renderSectionsPanel(filterQuery = '') {
+    panelSectionsGrid.innerHTML = '';
+
+    if (!notesStore.groups || notesStore.groups.length === 0) {
+      panelSectionsGrid.innerHTML = `
       <div style="grid-column: 1 / -1; text-align: center; padding: 4rem; color: var(--text-dim);">
         <h3>No hay grupos creados</h3>
         <p style="margin-top: 0.5rem;">Crea un grupo para organizar tus páginas de notas por secciones.</p>
       </div>`;
-    return;
-  }
-
-  notesStore.groups.forEach(group => {
-    let visibleNotes = group.notes;
-    if (filterQuery) {
-      const groupMatches = group.name.toLowerCase().includes(filterQuery);
-      if (!groupMatches) {
-        visibleNotes = group.notes.filter(n => 
-          n.title.toLowerCase().includes(filterQuery) || 
-          (n.content && n.content.toLowerCase().includes(filterQuery))
-        );
-        if (visibleNotes.length === 0) return;
-      }
+      return;
     }
 
-    const sectionCard = document.createElement('div');
-    sectionCard.className = 'section-group-card';
+    notesStore.groups.forEach(group => {
+      let visibleNotes = group.notes;
+      if (filterQuery) {
+        const groupMatches = group.name.toLowerCase().includes(filterQuery);
+        if (!groupMatches) {
+          visibleNotes = group.notes.filter(n =>
+            n.title.toLowerCase().includes(filterQuery) ||
+            (n.content && n.content.toLowerCase().includes(filterQuery))
+          );
+          if (visibleNotes.length === 0) return;
+        }
+      }
 
-    // Header de la sección
-    const header = document.createElement('div');
-    header.className = 'section-group-header';
-    header.innerHTML = `
+      const sectionCard = document.createElement('div');
+      sectionCard.className = 'section-group-card';
+
+      // Header de la sección
+      const header = document.createElement('div');
+      header.className = 'section-group-header';
+      header.innerHTML = `
       <div class="section-group-title">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
         <span>${group.name}</span>
@@ -1031,44 +1063,44 @@ function renderSectionsPanel(filterQuery = '') {
       </div>
     `;
 
-    header.querySelector('.btn-add-note-section').addEventListener('click', () => {
-      createNewNoteInGroup(group.id);
-      switchTab('note');
-    });
+      header.querySelector('.btn-add-note-section').addEventListener('click', () => {
+        createNewNoteInGroup(group.id);
+        switchTab('note');
+      });
 
-    header.querySelector('.btn-rename-section').addEventListener('click', () => {
-      openGroupModal('rename', group.id, group.name);
-    });
+      header.querySelector('.btn-rename-section').addEventListener('click', () => {
+        openGroupModal('rename', group.id, group.name);
+      });
 
-    header.querySelector('.btn-delete-section').addEventListener('click', () => {
-      deleteGroupConfirm(group.id, group.name);
-    });
+      header.querySelector('.btn-delete-section').addEventListener('click', () => {
+        deleteGroupConfirm(group.id, group.name);
+      });
 
-    sectionCard.appendChild(header);
+      sectionCard.appendChild(header);
 
-    // Contenedor de notas de la sección
-    const notesList = document.createElement('div');
-    notesList.className = 'section-notes-list';
+      // Contenedor de notas de la sección
+      const notesList = document.createElement('div');
+      notesList.className = 'section-notes-list';
 
-    if (visibleNotes.length === 0) {
-      notesList.innerHTML = `
+      if (visibleNotes.length === 0) {
+        notesList.innerHTML = `
         <div class="empty-section-notes">
           <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>
           <span>No hay notas en este grupo</span>
           <button class="btn-secondary btn-sm-add" style="margin-top: 0.4rem; font-size: 0.78rem;">+ Añadir primera página</button>
         </div>`;
-      notesList.querySelector('.btn-sm-add').addEventListener('click', () => {
-        createNewNoteInGroup(group.id);
-        switchTab('note');
-      });
-    } else {
-      visibleNotes.forEach(note => {
-        const noteCard = document.createElement('div');
-        noteCard.className = 'panel-note-card';
-        const dateStr = note.updatedAt ? new Date(note.updatedAt).toLocaleString() : 'Reciente';
-        const previewText = note.content ? note.content.slice(0, 180) : '(Nota vacía)';
+        notesList.querySelector('.btn-sm-add').addEventListener('click', () => {
+          createNewNoteInGroup(group.id);
+          switchTab('note');
+        });
+      } else {
+        visibleNotes.forEach(note => {
+          const noteCard = document.createElement('div');
+          noteCard.className = 'panel-note-card';
+          const dateStr = note.updatedAt ? new Date(note.updatedAt).toLocaleString() : 'Reciente';
+          const previewText = note.content ? note.content.slice(0, 180) : '(Nota vacía)';
 
-        noteCard.innerHTML = `
+          noteCard.innerHTML = `
           <div class="panel-note-header">
             <span class="panel-note-title" title="${note.title}">${note.title}</span>
             <button class="btn-icon-subtle btn-delete-danger btn-delete-panel-note" title="Eliminar nota" onclick="event.stopPropagation()">
@@ -1082,157 +1114,157 @@ function renderSectionsPanel(filterQuery = '') {
           </div>
         `;
 
-        noteCard.addEventListener('click', () => {
-          selectNote(note.id);
-          switchTab('note');
-        });
+          noteCard.addEventListener('click', () => {
+            selectNote(note.id);
+            switchTab('note');
+          });
 
-        noteCard.querySelector('.btn-delete-panel-note').addEventListener('click', () => {
-          deleteNoteConfirm(note.id, note.title);
-        });
+          noteCard.querySelector('.btn-delete-panel-note').addEventListener('click', () => {
+            deleteNoteConfirm(note.id, note.title);
+          });
 
-        notesList.appendChild(noteCard);
-      });
+          notesList.appendChild(noteCard);
+        });
+      }
+
+      sectionCard.appendChild(notesList);
+      panelSectionsGrid.appendChild(sectionCard);
+    });
+  }
+
+  function escapeHtml(text) {
+    const map = {
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#039;'
+    };
+    return text.replace(/[&<>"']/g, m => map[m]);
+  }
+
+  // ============================================================
+  // MODAL DE CREAR / RENOMBRAR GRUPO
+  // ============================================================
+
+  function openGroupModal(mode = 'create', groupId = null, currentName = '') {
+    groupModalContext = { mode, groupId };
+    modalGroupTitle.textContent = mode === 'create' ? 'Nuevo Grupo de Notas' : 'Renombrar Grupo de Notas';
+    groupNameInput.value = currentName || '';
+    groupModal.classList.remove('hidden');
+    setTimeout(() => groupNameInput.focus(), 100);
+  }
+
+  function closeGroupModal() {
+    groupModal.classList.add('hidden');
+    groupNameInput.value = '';
+  }
+
+  btnCloseGroupModal.addEventListener('click', closeGroupModal);
+  btnCancelGroupModal.addEventListener('click', closeGroupModal);
+
+  groupForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const name = groupNameInput.value.trim();
+    if (!name) return;
+
+    try {
+      if (groupModalContext.mode === 'create') {
+        const res = await apiFetch('/api/groups', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name })
+        });
+        const newGroup = await res.json();
+        expandedGroups.add(newGroup.id);
+        showToast(`Grupo "${name}" creado`);
+      } else {
+        await apiFetch(`/api/groups/${groupModalContext.groupId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name })
+        });
+        showToast(`Grupo renombrado a "${name}"`);
+      }
+      closeGroupModal();
+    } catch (err) {
+      showToast('Error al guardar grupo');
     }
-
-    sectionCard.appendChild(notesList);
-    panelSectionsGrid.appendChild(sectionCard);
   });
-}
 
-function escapeHtml(text) {
-  const map = {
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#039;'
-  };
-  return text.replace(/[&<>"']/g, m => map[m]);
-}
-
-// ============================================================
-// MODAL DE CREAR / RENOMBRAR GRUPO
-// ============================================================
-
-function openGroupModal(mode = 'create', groupId = null, currentName = '') {
-  groupModalContext = { mode, groupId };
-  modalGroupTitle.textContent = mode === 'create' ? 'Nuevo Grupo de Notas' : 'Renombrar Grupo de Notas';
-  groupNameInput.value = currentName || '';
-  groupModal.classList.remove('hidden');
-  setTimeout(() => groupNameInput.focus(), 100);
-}
-
-function closeGroupModal() {
-  groupModal.classList.add('hidden');
-  groupNameInput.value = '';
-}
-
-btnCloseGroupModal.addEventListener('click', closeGroupModal);
-btnCancelGroupModal.addEventListener('click', closeGroupModal);
-
-groupForm.addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const name = groupNameInput.value.trim();
-  if (!name) return;
-
-  try {
-    if (groupModalContext.mode === 'create') {
-      const res = await apiFetch('/api/groups', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name })
-      });
-      const newGroup = await res.json();
-      expandedGroups.add(newGroup.id);
-      showToast(`Grupo "${name}" creado`);
-    } else {
-      await apiFetch(`/api/groups/${groupModalContext.groupId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name })
-      });
-      showToast(`Grupo renombrado a "${name}"`);
+  // Cerrar modal al hacer clic en fondo
+  groupModal.addEventListener('click', (e) => {
+    if (e.target === groupModal) {
+      closeGroupModal();
     }
-    closeGroupModal();
-  } catch (err) {
-    showToast('Error al guardar grupo');
-  }
-});
+  });
 
-// Cerrar modal al hacer clic en fondo
-groupModal.addEventListener('click', (e) => {
-  if (e.target === groupModal) {
-    closeGroupModal();
-  }
-});
+  // ============================================================
+  // SECCIÓN DE ARCHIVOS (CON DESCARGA IMPLEMENTADA)
+  // ============================================================
 
-// ============================================================
-// SECCIÓN DE ARCHIVOS (CON DESCARGA IMPLEMENTADA)
-// ============================================================
-
-async function loadFiles() {
-  try {
-    const res = await apiFetch('/api/files');
-    const data = await res.json();
-    renderFileList(data.files || []);
-  } catch (e) {
-    console.error('Error cargando archivos:', e);
-  }
-}
-
-refreshFilesBtn.addEventListener('click', () => {
-  loadFiles();
-  showToast('Lista de archivos actualizada');
-});
-
-function formatBytes(bytes, decimals = 1) {
-  if (!+bytes) return '0 B';
-  const k = 1024;
-  const dm = decimals < 0 ? 0 : decimals;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
-}
-
-function isImageFile(fileName) {
-  return /\.(jpe?g|png|gif|webp|svg|bmp|ico)$/i.test(fileName);
-}
-
-function renderFileList(files) {
-  filesBadge.textContent = files.length;
-  filesList.innerHTML = '';
-
-  if (files.length === 0) {
-    filesList.innerHTML = `<div class="empty-files-msg">No hay archivos subidos aún. Arrastra archivos arriba para compartirlos.</div>`;
-    return;
+  async function loadFiles() {
+    try {
+      const res = await apiFetch('/api/files');
+      const data = await res.json();
+      renderFileList(data.files || []);
+    } catch (e) {
+      console.error('Error cargando archivos:', e);
+    }
   }
 
-  files.forEach(file => {
-    const isImg = isImageFile(file.name);
-    // URL normal (para ver o incrustar)
-    const fileUrl = `${window.location.origin}/api/files/${encodeURIComponent(file.name)}?token=${encodeURIComponent(token)}`;
-    // URL forzada a descarga mediante parámetro download=1
-    const fileDownloadUrl = `${window.location.origin}/api/files/${encodeURIComponent(file.name)}?token=${encodeURIComponent(token)}&download=1`;
-    const dateStr = new Date(file.mtime).toLocaleString();
+  refreshFilesBtn.addEventListener('click', () => {
+    loadFiles();
+    showToast('Lista de archivos actualizada');
+  });
 
-    const card = document.createElement('div');
-    card.className = 'file-card';
+  function formatBytes(bytes, decimals = 1) {
+    if (!+bytes) return '0 B';
+    const k = 1024;
+    const dm = decimals < 0 ? 0 : decimals;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
+  }
 
-    let previewHtml = '';
-    if (isImg) {
-      previewHtml = `
+  function isImageFile(fileName) {
+    return /\.(jpe?g|png|gif|webp|svg|bmp|ico)$/i.test(fileName);
+  }
+
+  function renderFileList(files) {
+    filesBadge.textContent = files.length;
+    filesList.innerHTML = '';
+
+    if (files.length === 0) {
+      filesList.innerHTML = `<div class="empty-files-msg">No hay archivos subidos aún. Arrastra archivos arriba para compartirlos.</div>`;
+      return;
+    }
+
+    files.forEach(file => {
+      const isImg = isImageFile(file.name);
+      // URL normal (para ver o incrustar)
+      const fileUrl = `${window.location.origin}/api/files/${encodeURIComponent(file.name)}?token=${encodeURIComponent(token)}`;
+      // URL forzada a descarga mediante parámetro download=1
+      const fileDownloadUrl = `${window.location.origin}/api/files/${encodeURIComponent(file.name)}?token=${encodeURIComponent(token)}&download=1`;
+      const dateStr = new Date(file.mtime).toLocaleString();
+
+      const card = document.createElement('div');
+      card.className = 'file-card';
+
+      let previewHtml = '';
+      if (isImg) {
+        previewHtml = `
         <div class="file-preview">
           <img src="${fileUrl}" alt="${file.name}" loading="lazy">
         </div>`;
-    } else {
-      previewHtml = `
+      } else {
+        previewHtml = `
         <div class="file-preview">
           <svg class="file-placeholder-icon" width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
         </div>`;
-    }
+      }
 
-    card.innerHTML = `
+      card.innerHTML = `
       ${previewHtml}
       <div class="file-info">
         <div class="file-name" title="${file.name}">${file.name}</div>
@@ -1261,190 +1293,190 @@ function renderFileList(files) {
       </div>
     `;
 
-    // Botón Copiar enlace
-    card.querySelector('.btn-copy').addEventListener('click', (e) => {
-      const url = e.currentTarget.getAttribute('data-url');
-      navigator.clipboard.writeText(url).then(() => {
-        showToast('Enlace copiado al portapapeles');
-      }).catch(() => {
-        showToast('No se pudo copiar');
+      // Botón Copiar enlace
+      card.querySelector('.btn-copy').addEventListener('click', (e) => {
+        const url = e.currentTarget.getAttribute('data-url');
+        navigator.clipboard.writeText(url).then(() => {
+          showToast('Enlace copiado al portapapeles');
+        }).catch(() => {
+          showToast('No se pudo copiar');
+        });
       });
-    });
 
-    // Botón Borrar
-    card.querySelector('.btn-delete').addEventListener('click', async (e) => {
-      const fileName = e.currentTarget.getAttribute('data-filename');
-      if (confirm(`¿Eliminar ${fileName}?`)) {
-        try {
-          const res = await apiFetch(`/api/files/${encodeURIComponent(fileName)}`, {
-            method: 'DELETE'
-          });
-          if (res.ok) {
-            showToast('Archivo eliminado');
-            loadFiles();
-          } else {
-            showToast('Error al eliminar archivo');
+      // Botón Borrar
+      card.querySelector('.btn-delete').addEventListener('click', async (e) => {
+        const fileName = e.currentTarget.getAttribute('data-filename');
+        if (confirm(`¿Eliminar ${fileName}?`)) {
+          try {
+            const res = await apiFetch(`/api/files/${encodeURIComponent(fileName)}`, {
+              method: 'DELETE'
+            });
+            if (res.ok) {
+              showToast('Archivo eliminado');
+              loadFiles();
+            } else {
+              showToast('Error al eliminar archivo');
+            }
+          } catch (err) {
+            showToast('Error al procesar eliminación');
           }
-        } catch (err) {
-          showToast('Error al procesar eliminación');
+        }
+      });
+
+      filesList.appendChild(card);
+    });
+  }
+
+  // Subida de Archivos (soporta callback onDone opcional)
+  async function uploadFiles(files, onDone = null) {
+    if (!files || files.length === 0) return;
+
+    const formData = new FormData();
+    for (let i = 0; i < files.length; i++) {
+      formData.append('files', files[i]);
+    }
+
+    uploadProgressContainer.classList.remove('hidden');
+    uploadProgressFill.style.width = '0%';
+    uploadProgressText.textContent = `Subiendo ${files.length} archivo(s)...`;
+
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/upload', true);
+    xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) {
+        const percent = Math.round((e.loaded / e.total) * 100);
+        uploadProgressFill.style.width = percent + '%';
+        uploadProgressText.textContent = `Subiendo... ${percent}%`;
+      }
+    };
+
+    xhr.onload = () => {
+      uploadProgressContainer.classList.add('hidden');
+      if (xhr.status === 200) {
+        showToast('Archivos subidos con éxito');
+        loadFiles();
+        let respData = null;
+        try {
+          respData = JSON.parse(xhr.responseText);
+        } catch (e) { }
+        if (onDone && respData && respData.uploaded) {
+          onDone(respData.uploaded);
+        }
+      } else if (xhr.status === 401) {
+        handleUnauthorized();
+      } else {
+        let errMsg = 'Error al subir archivo';
+        try {
+          const resp = JSON.parse(xhr.responseText);
+          if (resp.error) errMsg = resp.error;
+        } catch (e) { }
+        showToast(errMsg);
+      }
+    };
+
+    xhr.onerror = () => {
+      uploadProgressContainer.classList.add('hidden');
+      showToast('Error de conexión durante la subida');
+    };
+
+    xhr.send(formData);
+  }
+
+  // Utilidad para insertar texto en la posición del cursor de un textarea
+  function insertTextAtCursor(textarea, text) {
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const val = textarea.value;
+    textarea.value = val.substring(0, start) + text + val.substring(end);
+    textarea.selectionStart = textarea.selectionEnd = start + text.length;
+    textarea.dispatchEvent(new Event('input'));
+    textarea.focus();
+  }
+
+  // Pegado directo de capturas de pantalla / imágenes (Ctrl + V)
+  document.addEventListener('paste', async (e) => {
+    // Ignorar si el usuario no ha iniciado sesión
+    if (!appScreen || appScreen.classList.contains('hidden')) return;
+
+    const clipboardData = e.clipboardData || window.clipboardData;
+    if (!clipboardData || !clipboardData.items) return;
+
+    const items = clipboardData.items;
+    const imageFiles = [];
+
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.indexOf('image') !== -1) {
+        const blob = items[i].getAsFile();
+        if (blob) {
+          const now = new Date();
+          const y = now.getFullYear();
+          const m = String(now.getMonth() + 1).padStart(2, '0');
+          const d = String(now.getDate()).padStart(2, '0');
+          const h = String(now.getHours()).padStart(2, '0');
+          const min = String(now.getMinutes()).padStart(2, '0');
+          const s = String(now.getSeconds()).padStart(2, '0');
+          const ext = blob.type.split('/')[1] || 'png';
+          const fileName = `captura_${y}${m}${d}_${h}${min}${s}.${ext}`;
+          const file = new File([blob], fileName, { type: blob.type });
+          imageFiles.push(file);
         }
       }
-    });
+    }
 
-    filesList.appendChild(card);
+    if (imageFiles.length > 0) {
+      // Si el usuario tenía foco en el editor de texto, prevenir que se peguen caracteres binarios o cadenas raw
+      if (document.activeElement === noteTextarea) {
+        e.preventDefault();
+      }
+      showToast('Subiendo captura de pantalla...');
+
+      uploadFiles(imageFiles, (uploaded) => {
+        if (uploaded && uploaded.length > 0) {
+          const first = uploaded[0];
+          const fileUrl = `${window.location.origin}/api/files/${encodeURIComponent(first.name)}?token=${encodeURIComponent(token)}`;
+
+          // Si estamos en la pestaña del editor, insertar enlace o referencia markdown
+          if (currentTab === 'note') {
+            const mdImg = `\n![${first.name}](${fileUrl})\n`;
+            insertTextAtCursor(noteTextarea, mdImg);
+            showToast(`Captura guardada e insertada en la nota`);
+          } else {
+            showToast(`Captura "${first.name}" guardada en Archivos`);
+          }
+        }
+      });
+    }
   });
-}
 
-// Subida de Archivos (soporta callback onDone opcional)
-async function uploadFiles(files, onDone = null) {
-  if (!files || files.length === 0) return;
-
-  const formData = new FormData();
-  for (let i = 0; i < files.length; i++) {
-    formData.append('files', files[i]);
-  }
-
-  uploadProgressContainer.classList.remove('hidden');
-  uploadProgressFill.style.width = '0%';
-  uploadProgressText.textContent = `Subiendo ${files.length} archivo(s)...`;
-
-  const xhr = new XMLHttpRequest();
-  xhr.open('POST', '/api/upload', true);
-  xhr.setRequestHeader('Authorization', `Bearer ${token}`);
-
-  xhr.upload.onprogress = (e) => {
-    if (e.lengthComputable) {
-      const percent = Math.round((e.loaded / e.total) * 100);
-      uploadProgressFill.style.width = percent + '%';
-      uploadProgressText.textContent = `Subiendo... ${percent}%`;
-    }
-  };
-
-  xhr.onload = () => {
-    uploadProgressContainer.classList.add('hidden');
-    if (xhr.status === 200) {
-      showToast('Archivos subidos con éxito');
-      loadFiles();
-      let respData = null;
-      try {
-        respData = JSON.parse(xhr.responseText);
-      } catch (e) {}
-      if (onDone && respData && respData.uploaded) {
-        onDone(respData.uploaded);
-      }
-    } else if (xhr.status === 401) {
-      handleUnauthorized();
-    } else {
-      let errMsg = 'Error al subir archivo';
-      try {
-        const resp = JSON.parse(xhr.responseText);
-        if (resp.error) errMsg = resp.error;
-      } catch (e) {}
-      showToast(errMsg);
-    }
-  };
-
-  xhr.onerror = () => {
-    uploadProgressContainer.classList.add('hidden');
-    showToast('Error de conexión durante la subida');
-  };
-
-  xhr.send(formData);
-}
-
-// Utilidad para insertar texto en la posición del cursor de un textarea
-function insertTextAtCursor(textarea, text) {
-  const start = textarea.selectionStart;
-  const end = textarea.selectionEnd;
-  const val = textarea.value;
-  textarea.value = val.substring(0, start) + text + val.substring(end);
-  textarea.selectionStart = textarea.selectionEnd = start + text.length;
-  textarea.dispatchEvent(new Event('input'));
-  textarea.focus();
-}
-
-// Pegado directo de capturas de pantalla / imágenes (Ctrl + V)
-document.addEventListener('paste', async (e) => {
-  // Ignorar si el usuario no ha iniciado sesión
-  if (!appScreen || appScreen.classList.contains('hidden')) return;
-
-  const clipboardData = e.clipboardData || window.clipboardData;
-  if (!clipboardData || !clipboardData.items) return;
-
-  const items = clipboardData.items;
-  const imageFiles = [];
-
-  for (let i = 0; i < items.length; i++) {
-    if (items[i].type.indexOf('image') !== -1) {
-      const blob = items[i].getAsFile();
-      if (blob) {
-        const now = new Date();
-        const y = now.getFullYear();
-        const m = String(now.getMonth() + 1).padStart(2, '0');
-        const d = String(now.getDate()).padStart(2, '0');
-        const h = String(now.getHours()).padStart(2, '0');
-        const min = String(now.getMinutes()).padStart(2, '0');
-        const s = String(now.getSeconds()).padStart(2, '0');
-        const ext = blob.type.split('/')[1] || 'png';
-        const fileName = `captura_${y}${m}${d}_${h}${min}${s}.${ext}`;
-        const file = new File([blob], fileName, { type: blob.type });
-        imageFiles.push(file);
-      }
-    }
-  }
-
-  if (imageFiles.length > 0) {
-    // Si el usuario tenía foco en el editor de texto, prevenir que se peguen caracteres binarios o cadenas raw
-    if (document.activeElement === noteTextarea) {
+  // Eventos Dropzone
+  ['dragenter', 'dragover'].forEach(eventName => {
+    dropzone.addEventListener(eventName, (e) => {
       e.preventDefault();
-    }
-    showToast('Subiendo captura de pantalla...');
-
-    uploadFiles(imageFiles, (uploaded) => {
-      if (uploaded && uploaded.length > 0) {
-        const first = uploaded[0];
-        const fileUrl = `${window.location.origin}/api/files/${encodeURIComponent(first.name)}?token=${encodeURIComponent(token)}`;
-
-        // Si estamos en la pestaña del editor, insertar enlace o referencia markdown
-        if (currentTab === 'note') {
-          const mdImg = `\n![${first.name}](${fileUrl})\n`;
-          insertTextAtCursor(noteTextarea, mdImg);
-          showToast(`Captura guardada e insertada en la nota`);
-        } else {
-          showToast(`Captura "${first.name}" guardada en Archivos`);
-        }
-      }
+      e.stopPropagation();
+      dropzone.classList.add('dragover');
     });
-  }
-});
-
-// Eventos Dropzone
-['dragenter', 'dragover'].forEach(eventName => {
-  dropzone.addEventListener(eventName, (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    dropzone.classList.add('dragover');
   });
-});
 
-['dragleave', 'drop'].forEach(eventName => {
-  dropzone.addEventListener(eventName, (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    dropzone.classList.remove('dragover');
+  ['dragleave', 'drop'].forEach(eventName => {
+    dropzone.addEventListener(eventName, (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dropzone.classList.remove('dragover');
+    });
   });
-});
 
-dropzone.addEventListener('drop', (e) => {
-  const dt = e.dataTransfer;
-  const files = dt.files;
-  uploadFiles(files);
-});
+  dropzone.addEventListener('drop', (e) => {
+    const dt = e.dataTransfer;
+    const files = dt.files;
+    uploadFiles(files);
+  });
 
-fileInput.addEventListener('change', (e) => {
-  uploadFiles(e.target.files);
-  fileInput.value = '';
-});
+  fileInput.addEventListener('change', (e) => {
+    uploadFiles(e.target.files);
+    fileInput.value = '';
+  });
 
-// Arrancar comprobación de auth al cargar DOM
-window.addEventListener('DOMContentLoaded', initApp);
+  // Arrancar comprobación de auth al cargar DOM
+  window.addEventListener('DOMContentLoaded', initApp);
